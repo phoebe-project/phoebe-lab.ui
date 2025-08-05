@@ -1,0 +1,15 @@
+# Dockerfile.ui
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install Python dependencies
+COPY requirements.ui.txt .
+RUN pip install --no-cache-dir -r requirements.ui.txt
+
+# Copy NiceGUI frontend code
+COPY ui/ ./ui
+
+# Run NiceGUI on port 8080
+CMD ["python", "ui/ui.py"]

@@ -1,0 +1,58 @@
+services:
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: api
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./api:/app/api
+    depends_on:
+      - phoebe_server
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: server
+    command: ["python", "server/server.py"]
+    volumes:
+      - ./server:/app/server
+    expose:
+      - "5555"
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  session_manager:
+    build:
+      context: .
+      dockerfile: Dockerfile.manager
+    container_name: session_manager
+    depends_on:
+      - api
+    volumes:
+      - ./manager:/app/manager
+
+  nicegui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    container_name: nicegui
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+    volumes:
+      - ./ui:/app/ui
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"

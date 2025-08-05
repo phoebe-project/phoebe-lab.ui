@@ -1,0 +1,12 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.manager.txt .
+RUN pip install --no-cache-dir -r requirements.manager.txt
+
+# Copy the manager code
+COPY manager/session_manager.py ./manager/session_manager.py
+
+CMD ["python", "manager/session_manager.py"]
