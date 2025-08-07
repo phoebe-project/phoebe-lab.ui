@@ -1,58 +1,87 @@
 from nicegui import ui
-import requests
-
-client_id_label = ui.label("Client ID: Not started yet")
-session_list_dropdown = ui.select([], label='Active Sessions', multiple=True, clearable=True)
+from client import SessionAPI
 
 
-def start_session():
-    try:
-        response = requests.post("http://localhost:8001/start-session")
-        response.raise_for_status()
-        data = response.json()
-        client_id_label.text = f"Current client ID: {data['client_id']}"
-        update_session_list()
-    except Exception as e:
-        ui.notify(f"Error: {e}", type='negative')
+class SessionManagerUI:
+    """
+    A simple UI for managing sessions with a backend server.
+    Allows starting new sessions, listing all sessions, and closing selected sessions.
+    """
 
+    def __init__(self):
+        self.api = SessionAPI()
+        
+        ui.button("Start New Session", on_click=self.start_session)
+        ui.button("Close Selected Session(s)", on_click=self.close_session)
 
-def update_session_list():
-    try:
-        response = requests.get("http://localhost:8001/sessions")
-        response.raise_for_status()
-        sessions = response.json()  # {client_id: port} dictionary
-        if len(sessions) == 0:
-            session_list_dropdown.options = ["No active sessions"]
-            session_list_dropdown.value = None
-            return
-        session_list_dropdown.options = [f'{cid} (port {port})' for cid, port in sessions.items()]
-        session_list_dropdown.value = session_list_dropdown.options[0]
-        session_list_dropdown.update()
-    except Exception as e:
-        ui.notify(f"Error fetching sessions: {e}", type='negative')
+        columns = [
+            {'name': 'timestamp', 'label': 'Time created', 'field': 'timestamp'},
+            {'name': 'client_id', 'label': 'Client ID', 'field': 'client_id'},
+            {'name': 'mem_used', 'label': 'Memory utilized', 'field': 'mem_used'},
+            {'name': 'port', 'label': 'Port', 'field': 'port'},
+        ]
 
+        sessions = self.get_sessions()
+        rows = [{'client_id': cid, 'port': meta['port'], 'timestamp': meta['timestamp'], 'mem_used': meta['mem_used']} for cid, meta in sessions.items()]
 
-def close_session():
-    selected = session_list_dropdown.value
-    if not selected:
-        ui.notify("No session selected", type='warning')
-        return
+        self.table = ui.table(
+            columns=columns,
+            rows=rows,
+            row_key='client_id',
+            selection='multiple',
+        ).classes('w-full')
+        
+        # Create a timer to update memory usage every second
+        self.timer = ui.timer(10.0, self.update_memory_usage)
 
-    for entry in selected:
+    def get_sessions(self):
         try:
-            response = requests.post(f"http://localhost:8001/end-session/{entry.split(' ')[0]}")
-            response.raise_for_status()
-            ui.notify(f"Closed session {entry}")
+            return self.api.get_sessions()
         except Exception as e:
-            ui.notify(f"Error closing session {entry}: {e}", type='negative')
+            ui.notify(f"Error fetching sessions: {e}", type='negative')
+            return {}
+
+    def update_memory_usage(self):
+        """Update memory usage for all sessions in the table using the batch memory endpoint."""
+        try:
+            memory_data = self.api.get_memory_usage()
+            
+            # Update memory usage for each row
+            for row in self.table.rows:
+                client_id = row['client_id']
+                if client_id in memory_data:
+                    row['mem_used'] = f'{memory_data[client_id]:2.2f} MB'
+            
+            # Update the table with new memory values
+            self.table.update()
+        except Exception:
+            # Silently skip errors to avoid spamming notifications
+            pass
+
+    def start_session(self):
+        try:
+            new_session = self.api.start_session()
+            self.table.add_row(new_session)
+        except Exception as e:
+            ui.notify(f"Error: {e}", type='negative')
+
+    def close_session(self):
+        selected_rows = self.table.selected
+        if not selected_rows:
+            ui.notify("No session selected", type='warning')
+            return
+
+        try:
+            for row in selected_rows:
+                self.api.end_session(row['client_id'])
+                ui.notify(f"Closed session {row['client_id']}")
+
+            self.table.remove_rows(selected_rows)
+
         except Exception as e:
             ui.notify(f"Error closing session: {e}", type='negative')
 
-    update_session_list()
 
-
-ui.button("Start New Session", on_click=start_session)
-ui.button("List All Sessions", on_click=update_session_list)
-ui.button("Close Selected Session", on_click=close_session)
-
-ui.run(host='0.0.0.0', port=8081)
+if __name__ in {"__main__", "__mp_main__"}:
+    SessionManagerUI()
+    ui.run(host='0.0.0.0', port=8081)
