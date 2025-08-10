@@ -6,3 +6,4 @@ psutil
 phoebe
 pyzmq
 nicegui
+plotly

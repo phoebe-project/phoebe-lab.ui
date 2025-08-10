@@ -9,6 +9,8 @@ def main(port: int):
     print(f"[phoebe_server] Running on port {port}")
 
     b = phoebe.default_binary()
+    b.flip_constraint('mass@primary', solve_for='q@binary')
+    b.flip_constraint('mass@secondary', solve_for='sma@binary')
 
     while True:
         message = socket.recv_json()

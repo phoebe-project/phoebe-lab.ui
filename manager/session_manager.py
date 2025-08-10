@@ -1,5 +1,4 @@
 import tomllib
-import subprocess
 import uuid
 import logging
 import time

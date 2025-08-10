@@ -1,5 +1,5 @@
 from nicegui import ui
-from client import SessionAPI
+from client.session_api import SessionAPI
 
 
 class SessionManagerUI:
