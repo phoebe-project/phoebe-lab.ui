@@ -9,12 +9,13 @@ from client.phoebe_api import PhoebeAPI
 class PhoebeParameterWidget:
     """Widget for a single Phoebe parameter with value, adjustment checkbox, and step size."""
     
-    def __init__(self, name: str, label: str, value: float, step: float = 0.001, adjust: bool = False):
+    def __init__(self, name: str, label: str, value: float, step: float = 0.001, adjust: bool = False, on_value_changed=None):
         self.name = name
         self.label = label
         self.value = value
         self.step = step
         self.adjust = adjust
+        self.on_value_changed = on_value_changed  # Callback for value changes
         
         with ui.row().classes('items-center gap-2 w-full'):
             # Parameter label
@@ -27,6 +28,10 @@ class PhoebeParameterWidget:
                 format='%.6f',
                 step=step
             ).classes('flex-1 min-w-0')
+            
+            # Add value change handler if provided
+            if self.on_value_changed:
+                self.value_input.on('update:model-value', lambda: self.on_value_changed(self.name, self.value_input.value))
             
             # Checkbox for adjustment (moved before step)
             self.adjust_checkbox = ui.checkbox(text='Adjust', value=adjust).classes('flex-shrink-0')
@@ -56,8 +61,9 @@ class PhoebeParameterWidget:
 class DataTable:
     """Widget for displaying and managing observational data."""
     
-    def __init__(self):
+    def __init__(self, ui_ref=None):
         self.data: Optional[Dict[str, np.ndarray]] = None
+        self.ui_ref = ui_ref  # Reference to main UI for accessing API and parameters
         
         with ui.column().classes('w-full'):
             with ui.row().classes('gap-2 items-end w-full'):
@@ -84,7 +90,7 @@ class DataTable:
             ).classes('w-full max-h-60')
     
     def load_sample_data(self):
-        """Load sample light curve data."""
+        """Load sample light curve data and send to Phoebe API."""
         # Generate sample eclipsing binary light curve
         time = np.linspace(0, 10, 200)
         period = 2.5
@@ -284,7 +290,7 @@ class PhoebeUI:
         self.user_last_name = None
 
         # Show startup dialog first
-        # self.show_startup_dialog()
+        self.show_startup_dialog()
 
         # Create main UI (will be shown after dialog)
         with ui.splitter(value=30).classes('w-full h-screen') as self.main_splitter:
@@ -316,7 +322,7 @@ class PhoebeUI:
         self._current_morphology = 'detached'  # Track current morphology
         
         with ui.expansion('Observational Data', icon='table_chart', value=False).classes('w-full mb-4'):
-            self.data_table = DataTable()
+            self.data_table = DataTable(ui_ref=self)
         
         # Ephemerides parameters
         with ui.expansion('Ephemerides', icon='schedule', value=False).classes('w-full mb-4'):
