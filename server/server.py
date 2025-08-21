@@ -2,6 +2,7 @@ import sys
 import zmq
 import phoebe
 import traceback
+from common.serialization import make_json_serializable
 
 
 class PhoebeServer:
@@ -21,9 +22,8 @@ class PhoebeServer:
         # Command registry
         self.commands = {
             'phoebe.version': self.version,
-            # 'to_phase': self.to_phase,
-            # 'add_dataset': self.add_dataset,
-            # 'info': self.bundle_info,
+            'b.add_dataset': self.add_dataset,
+            'b.run_compute': self.run_compute,
             'status': self.status
         }
 
@@ -35,25 +35,20 @@ class PhoebeServer:
 
         if cmd_name in self.commands:
             try:
-                # Get command parameters (exclude 'cmd' field)
-                params = {k: v for k, v in message.items() if k != 'cmd'}
+                # Get command parameters from 'params' key
+                params = message.get('params', {})
 
                 # Execute the registered command
                 result = self.commands[cmd_name](**params)
 
+                # Make result JSON-serializable
+                serializable_result = make_json_serializable(result)
+
                 # Send back the result
                 response = {
                     "status": "success",
-                    "result": result
+                    "result": serializable_result
                 }
-
-                # Handle special cases for specific command types
-                # if cmd_name == "to_phase":
-                #     # If it's a phase calculation, ensure result is serializable
-                #     if hasattr(result, 'tolist'):
-                #         response["phases"] = result.tolist()
-                #     else:
-                #         response["phases"] = list(result) if hasattr(result, '__iter__') else [result]
 
                 print(f"[phoebe_server] Command '{cmd_name}' executed successfully")
                 return response
@@ -77,23 +72,29 @@ class PhoebeServer:
         """Get Phoebe version."""
         return phoebe.__version__
 
-    # def to_phase(self, times, t0_supconj=0.0, period=1.0):
-    #     """Calculate phases from times."""
-    #     return self.bundle.to_phase(times, t0_supconj=t0_supconj, period=period)
+    def add_dataset(self, **kwargs):
+        """Add a dataset to the Phoebe bundle."""
+        # Extract kind as required positional argument
+        if 'kind' not in kwargs:
+            raise ValueError("kind parameter is required for add_dataset")
+        
+        kind = kwargs.pop('kind')
+        
+        # Extract overwrite to avoid duplicate parameter
+        overwrite = kwargs.pop('overwrite', True)
+        
+        # Call Phoebe's add_dataset with kind as positional arg and rest as kwargs
+        self.bundle.add_dataset(kind, **kwargs, overwrite=overwrite)
+        return {"status": "Dataset added successfully"}
 
-    # def add_dataset(self, kind='lc', times=None, fluxes=None, sigmas=None, **kwargs):
-    #     """Add dataset to bundle."""
-    #     times = times or []
-    #     fluxes = fluxes or []
-    #     sigmas = sigmas or []
+    def run_compute(self):
+        """Run the Phoebe compute model."""
 
-    #     # For now, just return success (in real implementation, add to bundle)
-    #     # self.bundle.add_dataset(kind, times=times, fluxes=fluxes, sigmas=sigmas, **kwargs)
-    #     return {"dataset_added": True, "num_points": len(times)}
+        fluxes = self.bundle.get_value('fluxes', context='dataset')
+        self.bundle.set_value('pblum_mode', value='dataset-scaled' if len(fluxes) > 0 else 'component-coupled')
+        self.bundle.run_compute()
 
-    # def bundle_info(self):
-    #     """Get bundle information."""
-    #     return {"num_parameters": len(self.bundle.get_parameters())}
+        return self.bundle.get_value('fluxes', context='model')
 
     def status(self):
         """Get server status."""

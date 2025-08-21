@@ -1,6 +1,7 @@
 """Phoebe API client for communicating with Phoebe sessions."""
 
 import requests
+from common.serialization import make_json_serializable
 
 
 class PhoebeAPI:
@@ -19,6 +20,22 @@ class PhoebeAPI:
         if not self.client_id:
             raise ValueError("No client ID set. Call set_client_id() first or provide client_id in constructor.")
         
-        response = requests.post(f"{self.base_url}/send/{self.client_id}", json=command)
+        # Serialize the command to ensure JSON compatibility
+        serializable_command = make_json_serializable(command)
+        
+        response = requests.post(f"{self.base_url}/send/{self.client_id}", json=serializable_command)
         response.raise_for_status()
         return response.json()
+
+    def add_dataset(self, kind=None, **kwargs):
+        """Add a dataset to the Phoebe session."""
+        # If kind is passed as positional argument, add it to kwargs
+        if kind is not None:
+            kwargs['kind'] = kind
+            
+        command = {
+            'cmd': 'b.add_dataset',
+            'params': kwargs
+        }
+
+        return self.send_command(command)

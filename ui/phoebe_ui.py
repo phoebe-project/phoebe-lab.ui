@@ -64,32 +64,34 @@ class PhoebeParameterWidget:
 
 
 class DataTable:
-    """Widget for displaying and managing multiple observational datasets."""
-    
+    """
+    Widget for displaying and managing datasets.
+    """
+
     def __init__(self, ui_ref=None):
         self.datasets = {}  # Dictionary to store multiple datasets: {label: dataset_info}
         self.ui_ref = ui_ref  # Reference to main UI for accessing API and parameters
-        
+
         with ui.column().classes('w-full'):
             # Main datasets table
             self.datasets_table = ui.table(
                 columns=[
-                    {'name': 'label', 'label': 'Data Label', 'field': 'label', 'align': 'left'},
-                    {'name': 'data_type', 'label': 'Data Type', 'field': 'data_type', 'align': 'left'},
+                    {'name': 'dataset', 'label': 'Dataset', 'field': 'dataset', 'align': 'left'},
+                    {'name': 'kind', 'label': 'Data Type', 'field': 'kind', 'align': 'left'},
                     {'name': 'passband', 'label': 'Passband', 'field': 'passband', 'align': 'left'},
-                    {'name': 'length', 'label': 'Length', 'field': 'length', 'align': 'right'},
+                    {'name': 'length', 'label': 'Data Points', 'field': 'length', 'align': 'center'}
                 ],
                 rows=[],
-                row_key='label',
+                row_key='dataset',
                 selection='single'
             ).classes('w-full').style(
                 '--q-table-selection-color: transparent; '
                 '--q-table-selected-color: rgba(0,0,0,0);'
             )
-            
+
             # Hide the selection info text
             self.datasets_table.props('hide-selected-banner')
-            
+
             # Add dataset action buttons aligned with table
             with ui.row().classes('gap-2 mt-2 w-full justify-end'):
                 ui.button(
@@ -107,10 +109,10 @@ class DataTable:
                     on_click=self._remove_selected_dataset,
                     icon='delete'
                 ).props('flat color=negative')
-                
+
                 # Bind button states to selection and data availability
                 self._update_button_states()
-                
+
                 # Add selection change handler to update button states
                 self.datasets_table.on('selection', lambda _: self._update_button_states())
                 # Also handle row clicks to ensure state updates
@@ -155,12 +157,12 @@ class DataTable:
                 return
             
             # Get the selected row's label
-            selected_label = selected[0].get('label') if hasattr(selected[0], 'get') else selected[0].get('label', '')
+            selected_dataset = selected[0].get('dataset') if hasattr(selected[0], 'get') else selected[0].get('dataset', '')
             
-            if selected_label and selected_label in self.datasets:
+            if selected_dataset and selected_dataset in self.datasets:
                 # Show confirmation dialog
                 with ui.dialog() as confirm_dialog, ui.card():
-                    ui.label(f'Remove Dataset: {selected_label}').classes('text-lg font-bold mb-4')
+                    ui.label(f'Remove Dataset: {selected_dataset}').classes('text-lg font-bold mb-4')
                     ui.label('Are you sure you want to remove this dataset? '
                              'This action cannot be undone.').classes('mb-4')
                     
@@ -169,7 +171,7 @@ class DataTable:
                         ui.button(
                             'Remove',
                             on_click=lambda: [
-                                self.remove_dataset(selected_label),
+                                self.remove_dataset(selected_dataset),
                                 confirm_dialog.close(),
                                 ui.timer(0.1, lambda: self._update_button_states(), once=True)
                             ],
@@ -193,10 +195,10 @@ class DataTable:
                 return
             
             # Get the selected row's label
-            selected_label = selected[0].get('label') if hasattr(selected[0], 'get') else selected[0].get('label', '')
+            selected_dataset = selected[0].get('dataset') if hasattr(selected[0], 'get') else selected[0].get('dataset', '')
             
-            if selected_label and selected_label in self.datasets:
-                self._open_dataset_dialog(edit_label=selected_label)
+            if selected_dataset and selected_dataset in self.datasets:
+                self._open_dataset_dialog(edit_dataset=selected_dataset)
             else:
                 ui.notify('Selected dataset not found', type='error')
                 
@@ -208,39 +210,39 @@ class DataTable:
         """Open dialog to add a new dataset."""
         self._open_dataset_dialog()
     
-    def open_edit_dataset_dialog(self, label: str):
+    def open_edit_dataset_dialog(self, dataset: str):
         """Open dialog to edit an existing dataset."""
-        if label in self.datasets:
-            self._open_dataset_dialog(edit_label=label)
+        if dataset in self.datasets:
+            self._open_dataset_dialog(edit_dataset=dataset)
     
-    def _open_dataset_dialog(self, edit_label: str = None):
+    def _open_dataset_dialog(self, edit_dataset: str = None):
         """Open dialog to add or edit a dataset."""
-        is_edit = edit_label is not None
-        existing_dataset = self.datasets.get(edit_label) if is_edit else None
+        is_edit = edit_dataset is not None
+        existing_dataset = self.datasets.get(edit_dataset) if is_edit else None
         
         with ui.dialog() as dataset_dialog, ui.card().classes('w-[800px] h-[600px]'):
-            title = f'Edit Dataset: {edit_label}' if is_edit else 'Add Dataset'
+            title = f'Edit Dataset: {edit_dataset}' if is_edit else 'Add Dataset'
             ui.label(title).classes('text-xl font-bold mb-4')
             
             # Dataset configuration
             with ui.column().classes('w-full gap-4'):
                 # Data type selection
-                data_type_select = ui.select(
+                kind_select = ui.select(
                     options={
-                        'light_curve': 'Light Curve',
-                        'rv_curve': 'RV Curve',
+                        'lc': 'Light Curve',
+                        'rv': 'RV Curve',
                     },
-                    value=existing_dataset['data_type'] if is_edit else 'light_curve',
+                    value=existing_dataset['kind'] if is_edit else 'lc',
                     label='Data Type'
                 ).classes('w-full')
                 if is_edit:
-                    data_type_select.disable()  # Don't allow changing data type during edit
+                    kind_select.disable()  # Don't allow changing data type during edit
                 
                 # Data label input
                 label_input = ui.input(
                     label='Data Label',
                     placeholder='e.g., lc01, rv_primary, etc.',
-                    value=edit_label if is_edit else f'dataset_{len(self.datasets) + 1:02d}'
+                    value=edit_dataset if is_edit else f'dataset_{len(self.datasets) + 1:02d}'
                 ).classes('w-full')
                 
                 # Passband selection
@@ -249,6 +251,23 @@ class DataTable:
                     value=existing_dataset['passband'] if is_edit else 'GoChile:R',
                     label='Passband'
                 ).classes('w-full')
+                
+                # Component selection (for RV datasets)
+                component_select = ui.select(
+                    options={
+                        'primary': 'Primary',
+                        'secondary': 'Secondary'
+                    },
+                    value=existing_dataset.get('component', 'primary') if is_edit else 'primary',
+                    label='Component (for RV data)'
+                ).classes('w-full')
+                
+                # Show/hide component selector based on kind
+                def update_component_visibility():
+                    component_select.visible = kind_select.value == 'rv'
+                
+                kind_select.on('update:model-value', lambda: update_component_visibility())
+                update_component_visibility()  # Set initial visibility
 
             ui.separator().classes('my-4')
             
@@ -323,7 +342,7 @@ class DataTable:
                                     
                                     # Load the file data
                                     self._load_file_in_dialog(
-                                        file_path, dataset_dialog, label_input, data_type_select, passband_select,
+                                        file_path, dataset_dialog, label_input, kind_select, passband_select, component_select,
                                         preview_label, preview_table, is_edit
                                     )
                             
@@ -352,7 +371,7 @@ class DataTable:
                         # File upload
                         file_upload = ui.upload(
                             on_upload=lambda e: self._handle_upload_in_dialog(
-                                e, dataset_dialog, label_input, data_type_select, passband_select,
+                                e, dataset_dialog, label_input, kind_select, passband_select, component_select,
                                 preview_label, preview_table, is_edit
                             ),
                             max_file_size=10_000_000,  # 10MB limit
@@ -395,8 +414,8 @@ class DataTable:
                 ui.button(
                     'Save' if is_edit else 'Add',
                     on_click=lambda: self._save_dataset_from_dialog(
-                        label_input, data_type_select, passband_select,
-                        dataset_dialog, is_edit, edit_label
+                        label_input, kind_select, passband_select, component_select,
+                        dataset_dialog, is_edit, edit_dataset
                     ),
                     icon='save'
                 ).classes('bg-blue-500')
@@ -406,20 +425,20 @@ class DataTable:
     def _populate_preview_table(self, preview_table, data):
         """Populate preview table with dataset."""
         rows = []
-        display_count = min(20, len(data['time']))
-        value_key = 'flux' if 'flux' in data else 'value'
+        display_count = min(20, len(data['times']))
+        value_key = 'obs' if 'obs' in data else 'value'
         
         for i in range(display_count):
             rows.append({
-                'time': round(float(data['time'][i]), 4),
+                'time': round(float(data['times'][i]), 4),
                 'value': round(float(data[value_key][i]), 4),
-                'error': round(float(data['error'][i]), 4)
+                'error': round(float(data['sigmas'][i]), 4)
             })
         
         preview_table.rows = rows
         preview_table.update()
     
-    def _load_file_in_dialog(self, file_path, dialog, label_input, data_type_select, passband_select,
+    def _load_file_in_dialog(self, file_path, dialog, label_input, kind_select, passband_select, component_select,
                              preview_label, preview_table, is_edit):
         """Load file and update preview in dialog."""
         try:
@@ -427,7 +446,7 @@ class DataTable:
             if data:
                 # Update preview
                 filename = Path(file_path).name
-                preview_label.text = f'{filename} ({len(data["time"])} points)'
+                preview_label.text = f'{filename} ({len(data["times"])} points)'
                 self._populate_preview_table(preview_table, data)
                 
                 # Store loaded data for saving
@@ -441,7 +460,7 @@ class DataTable:
         except Exception as e:
             ui.notify(f'Error loading file: {str(e)}', type='error')
     
-    def _handle_upload_in_dialog(self, event, dialog, label_input, data_type_select, passband_select,
+    def _handle_upload_in_dialog(self, event, dialog, label_input, kind_select, passband_select, component_select,
                                  preview_label, preview_table, is_edit):
         """Handle file upload in dialog."""
         try:
@@ -454,7 +473,7 @@ class DataTable:
             data = self._parse_data_content(file_content)
             if data:
                 # Update preview
-                preview_label.text = f'{file_name} ({len(data["time"])} points)'
+                preview_label.text = f'{file_name} ({len(data["times"])} points)'
                 self._populate_preview_table(preview_table, data)
                 
                 # Store loaded data for saving
@@ -468,26 +487,26 @@ class DataTable:
         except Exception as e:
             ui.notify(f'Error processing file: {str(e)}', type='error')
     
-    def _save_dataset_from_dialog(self, label_input, data_type_select,
-                                 passband_select, dialog, is_edit, edit_label):
+    def _save_dataset_from_dialog(self, label_input, kind_select,
+                                 passband_select, component_select, dialog, is_edit, edit_dataset):
         """Save dataset from dialog."""
-        label = label_input.value.strip()
+        dataset = label_input.value.strip()
         
-        if not label:
+        if not dataset:
             ui.notify('Please enter a dataset label', type='error')
             return
             
         # Check for duplicate labels (except when editing same dataset)
-        if label in self.datasets and (not is_edit or label != edit_label):
-            ui.notify(f'Dataset label "{label}" already exists', type='error')
+        if dataset in self.datasets and (not is_edit or dataset != edit_dataset):
+            ui.notify(f'Dataset label "{dataset}" already exists', type='error')
             return
         
         # Get data (either loaded new data or use existing)
         if hasattr(dialog, '_loaded_data'):
             data_info = dialog._loaded_data
-        elif is_edit and edit_label in self.datasets:
+        elif is_edit and edit_dataset in self.datasets:
             # Use existing data if no new data loaded
-            existing = self.datasets[edit_label]
+            existing = self.datasets[edit_dataset]
             data_info = {
                 'data': existing['data'],
                 'filename': existing['filename']
@@ -498,34 +517,37 @@ class DataTable:
         
         if is_edit:
             # If label changed, remove old dataset and add with new label
-            if label != edit_label:
+            if dataset != edit_dataset:
                 # Remove old dataset
-                del self.datasets[edit_label]
+                del self.datasets[edit_dataset]
                 # Add with new label
                 self._add_dataset(
-                    label=label,
-                    data_type=data_type_select.value,
+                    dataset=dataset,
+                    kind=kind_select.value,
                     passband=passband_select.value,
                     data=data_info['data'],
-                    filename=data_info['filename']
+                    filename=data_info['filename'],
+                    component=component_select.value
                 )
-                ui.notify(f'Dataset renamed from "{edit_label}" to "{label}"', type='positive')
+                ui.notify(f'Dataset renamed from "{edit_dataset}" to "{dataset}"', type='positive')
             else:
                 # Update existing dataset with same label
-                self.datasets[edit_label]['data_type'] = data_type_select.value
-                self.datasets[edit_label]['passband'] = passband_select.value
-                self.datasets[edit_label]['data'] = data_info['data']
-                self.datasets[edit_label]['filename'] = data_info['filename']
-                self.datasets[edit_label]['length'] = len(data_info['data']['time'])
-                ui.notify(f'Updated dataset "{edit_label}"', type='positive')
+                self.datasets[edit_dataset]['kind'] = kind_select.value
+                self.datasets[edit_dataset]['passband'] = passband_select.value
+                self.datasets[edit_dataset]['component'] = component_select.value
+                self.datasets[edit_dataset]['data'] = data_info['data']
+                self.datasets[edit_dataset]['filename'] = data_info['filename']
+                self.datasets[edit_dataset]['length'] = len(data_info['data']['times'])
+                ui.notify(f'Updated dataset "{edit_dataset}"', type='positive')
         else:
             # Add new dataset
             self._add_dataset(
-                label=label,
-                data_type=data_type_select.value,
+                dataset=dataset,
+                kind=kind_select.value,
                 passband=passband_select.value,
                 data=data_info['data'],
-                filename=data_info['filename']
+                filename=data_info['filename'],
+                component=component_select.value
             )
         
         dialog.close()
@@ -533,16 +555,17 @@ class DataTable:
         # Update button states after dialog closes (selection may be cleared)
         ui.timer(0.1, lambda: self._update_button_states(), once=True)
     
-    def _confirm_remove_dataset(self, label, dialog):
+    def _confirm_remove_dataset(self, dataset, dialog):
         """Show confirmation dialog for dataset removal."""
         with ui.dialog() as confirm_dialog, ui.card():
-            ui.label(f'Remove Dataset: {label}').classes('text-lg font-bold mb-4')
-            ui.label('Are you sure you want to remove this dataset? This action cannot be undone.').classes('mb-4')
+            ui.label(f'Remove Dataset: {dataset}').classes('text-lg font-bold mb-4')
+            ui.label('Are you sure you want to remove this dataset? '
+                     'This action cannot be undone.').classes('mb-4')
             
             with ui.row().classes('gap-2 justify-end w-full'):
                 ui.button('Cancel', on_click=confirm_dialog.close).classes('bg-gray-500')
                 ui.button('Remove', on_click=lambda: [
-                    self.remove_dataset(label),
+                    self.remove_dataset(dataset),
                     confirm_dialog.close(),
                     dialog.close()
                 ]).classes('bg-red-500')
@@ -558,23 +581,24 @@ class DataTable:
         }
         return descriptions.get(filename, 'Example data file')
     
-    def _load_example_file(self, file_path: str, dialog, label_input, data_type_select, passband_select):
+    def _load_example_file(self, file_path: str, dialog, label_input, kind_select, passband_select, component_select):
         """Load an example file and add to datasets."""
         try:
             data = self._parse_data_file(file_path)
             if data:
                 self._add_dataset(
-                    label=label_input.value,
-                    data_type=data_type_select.value,
+                    dataset=label_input.value,
+                    kind=kind_select.value,
                     passband=passband_select.value,
                     data=data,
-                    filename=Path(file_path).name
+                    filename=Path(file_path).name,
+                    component=component_select.value
                 )
                 dialog.close()
         except Exception as e:
             ui.notify(f'Error loading example file: {str(e)}', type='error')
     
-    def _handle_file_upload(self, event, dialog, label_input, data_type_select, passband_select):
+    def _handle_file_upload(self, event, dialog, label_input, kind_select, passband_select, component_select):
         """Handle uploaded file and add to datasets."""
         try:
             # Get uploaded file content
@@ -589,51 +613,75 @@ class DataTable:
             data = self._parse_data_content(file_content)
             if data:
                 self._add_dataset(
-                    label=label_input.value,
-                    data_type=data_type_select.value,
+                    dataset=label_input.value,
+                    kind=kind_select.value,
                     passband=passband_select.value,
                     data=data,
-                    filename=file_name
+                    filename=file_name,
+                    component=component_select.value
                 )
                 dialog.close()
                 
         except Exception as e:
             ui.notify(f'Error processing uploaded file: {str(e)}', type='error')
     
-    def _add_dataset(self, label: str, data_type: str, passband: str, data: Dict[str, np.ndarray], filename: str):
+    def _add_dataset(self, dataset: str, kind: str, passband: str, data: Dict[str, np.ndarray], filename: str, component: str = 'primary'):
         """Add a dataset to the collection."""
-        # Validate label uniqueness
-        if label in self.datasets:
-            ui.notify(f'Dataset label "{label}" already exists. Please choose a different name.', type='error')
+        # Validate dataset uniqueness
+        if dataset in self.datasets:
+            ui.notify(f'Dataset "{dataset}" already exists. Please choose a different name.', type='error')
             return
         
         # Store dataset
         dataset_info = {
-            'label': label,
-            'data_type': data_type,
+            'kind': kind,
             'passband': passband,
+            'component': component,
+            'dataset': dataset,
             'data': data,
             'filename': filename,
-            'length': len(data['time'])
+            'length': len(data['times'])
         }
         
-        self.datasets[label] = dataset_info
+        self.datasets[dataset] = dataset_info
         
         # Update datasets table
         self._update_datasets_table()
         
         # Update button states
         self._update_button_states()
+
+        # Call the API to add the dataset to the bundle:
+        api = self.ui_ref.phoebe_api
         
-        ui.notify(f'Added dataset "{label}" with {len(data["time"])} data points', type='positive')
+        # Prepare parameters for the dataset (excluding kind which goes as positional arg)
+        params = {
+            'dataset': dataset,
+            'passband': passband,
+            'times': data['times'],
+            'sigmas': data['sigmas'],
+            'overwrite': True
+        }
+
+        # Add kind-specific parameters
+        if kind == 'lc':
+            params['fluxes'] = data['obs']
+        elif kind == 'rv':
+            params['component'] = component
+            params['rvs'] = data['obs']
+
+        # Call API with kind as positional argument and rest as kwargs
+        api.add_dataset(kind, **params)
+
+        ui.notify(f'Added dataset "{dataset}" with {len(data["times"])} data points', type='positive')
     
     def _update_datasets_table(self):
         """Update the main datasets table."""
         rows = []
         for label, info in self.datasets.items():
             rows.append({
-                'label': label,
-                'data_type': info['data_type'].replace('_', ' ').title(),
+                'dataset': label,
+                'kind': info['kind'].replace('_', ' ').upper(),
                 'passband': info['passband'],
                 'length': info['length']
             })
@@ -647,20 +695,20 @@ class DataTable:
         # Update button states whenever table is updated
         ui.timer(0.1, lambda: self._update_button_states(), once=True)
     
-    def remove_dataset(self, label: str):
+    def remove_dataset(self, dataset: str):
         """Remove a dataset from the collection."""
-        if label in self.datasets:
-            del self.datasets[label]
+        if dataset in self.datasets:
+            del self.datasets[dataset]
             self._update_datasets_table()
             
             # Update button states
             self._update_button_states()
             
-            ui.notify(f'Removed dataset "{label}"', type='info')
+            ui.notify(f'Removed dataset "{dataset}"', type='info')
     
-    def get_dataset(self, label: str) -> Optional[Dict]:
-        """Get dataset by label."""
-        return self.datasets.get(label)
+    def get_dataset(self, dataset: str) -> Optional[Dict]:
+        """Get dataset by dataset name."""
+        return self.datasets.get(dataset)
     
     def get_all_datasets(self) -> Dict[str, Dict]:
         """Get all datasets."""
@@ -717,9 +765,9 @@ class DataTable:
             raise Exception('No valid data points found')
         
         return {
-            'time': np.array(time_values),
-            'flux': np.array(value_values),  # Could be flux, magnitude, or velocity
-            'error': np.array(error_values)
+            'times': np.array(time_values),
+            'obs': np.array(value_values),  # Could be flux, magnitude, or velocity
+            'sigmas': np.array(error_values)
         }
     
     def get_plotting_data(self):
@@ -849,14 +897,14 @@ class LightCurvePlot:
                 t0_value = t0.value_input.value if t0 else 0.0
                 
                 # Convert to phase [-0.5, 0.5] and alias for plotting
-                phase_data = time_to_phase(data['time'], period_value, t0_value)
+                phase_data = time_to_phase(data['times'], period_value, t0_value)
                 x_data, flux_aliased, error_aliased = alias_phase_for_plotting(
-                    phase_data, data['flux'], data['error'], extend_range=0.1
+                    phase_data, data['obs'], data['sigmas'], extend_range=0.1
                 )
             else:
-                x_data = data['time']
-                flux_aliased = data['flux']
-                error_aliased = data['error']
+                x_data = data['times']
+                flux_aliased = data['obs']
+                error_aliased = data['sigmas']
             
             if self.y_axis_dropdown.value == 'magnitude':
                 y_data = flux_to_magnitude(flux_aliased)
@@ -884,13 +932,13 @@ class LightCurvePlot:
                 t0_value = t0.value_input.value if t0 else 0.0
                 
                 # Convert to phase [-0.5, 0.5] and alias for plotting
-                phase_model = time_to_phase(self.model_data['time'], period_value, t0_value)
+                phase_model = time_to_phase(self.model_data['times'], period_value, t0_value)
                 x_model, flux_model_aliased = alias_phase_for_plotting(
-                    phase_model, self.model_data['flux'], extend_range=0.1
+                    phase_model, self.model_data['obs'], extend_range=0.1
                 )
             else:
-                x_model = self.model_data['time']
-                flux_model_aliased = self.model_data['flux']
+                x_model = self.model_data['times']
+                flux_model_aliased = self.model_data['obs']
                 
             if self.y_axis_dropdown.value == 'magnitude':
                 y_model = flux_to_magnitude(flux_model_aliased)
@@ -1080,7 +1128,7 @@ class PhoebeUI:
             ).classes('flex-grow min-w-0')  # Use flex-grow instead of flex-1
         
         with ui.row().classes('gap-4 mt-2'):
-            ui.button('Fit Parameters', on_click=self.fit_parameters, icon='tune')
+            ui.button('Fit Parameters', on_click=self.fit_parameters, icon='tune').classes('h-12 flex-shrink-0')
     
     def create_plot_panel(self):
         """Create the plotting panel."""
@@ -1200,7 +1248,7 @@ class PhoebeUI:
                 if self.phoebe_api:
                     self.phoebe_api.set_client_id(None)
     
-    def _on_ephemeris_changed(self, param_name, new_value):
+    def _on_ephemeris_changed(self, param_name=None, param_value=None):
         """Handle changes to ephemeris parameters (t0, period) and update phase plot."""
         if hasattr(self, 'light_curve_plot') and self.light_curve_plot:
             # Only replot if we're currently showing phase on x-axis
@@ -1281,17 +1329,12 @@ class PhoebeUI:
     
     def compute_model(self):
         """Compute Phoebe model with current parameters."""
-        t0 = self.t0_param.value_input.value
-        period = self.period_param.value_input.value
-        n_points = int(self.n_points_input.value)
+        response = self.phoebe_api.run_command('b.run_compute', params={})
+        if response['status'] == 'success':
+            ui.notify('Model computed successfully', type='positive')
+        else:
+            ui.notify(f"Model computation failed: {response['error']}", type='error')
 
-        compute_phases = np.linspace(-0.6, 0.6, 1.2*n_points)
-
-        # Send these to the API for computation
-        self.phoebe_api.compute_model(t0=t0, period=period, phases=compute_phases)
-        
-        ui.notify(f'Model computed with T₀={t0:.4f}, Period={period:.6f}', type='positive')
-    
     def fit_parameters(self):
         """Fit adjustable parameters to data."""
         adjustable_params = []
