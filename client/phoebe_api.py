@@ -27,15 +27,64 @@ class PhoebeAPI:
         response.raise_for_status()
         return response.json()
 
+    def set_value(self, twig: str, value: float):
+        """Set a parameter value in the Phoebe session.
+        
+        Parameters:
+        -----------
+        twig : str
+            The parameter twig/qualifier (e.g., 'period@binary', 't0_supconj@binary')
+        value : float
+            The value to set for the parameter
+            
+        Returns:
+        --------
+        dict
+            Response from the server with status and result
+        """
+        if not twig:
+            raise ValueError("twig parameter cannot be empty")
+        if value is None:
+            raise ValueError("value parameter cannot be None")
+            
+        command = {
+            'cmd': 'b.set_value',
+            'params': {
+                'twig': twig,
+                'value': value
+            }
+        }
+        return self.send_command(command)
+
     def add_dataset(self, kind=None, **kwargs):
         """Add a dataset to the Phoebe session."""
         # If kind is passed as positional argument, add it to kwargs
         if kind is not None:
             kwargs['kind'] = kind
-            
+
         command = {
             'cmd': 'b.add_dataset',
             'params': kwargs
         }
 
+        return self.send_command(command)
+
+    def run_compute(self, **kwargs):
+        """Run the Phoebe computation with the current parameters.
+        
+        Parameters:
+        -----------
+        **kwargs : dict
+            Optional parameters for the compute operation
+            (e.g., compute='preview', model='phoebe', etc.)
+            
+        Returns:
+        --------
+        dict
+            Response from the server with status and model results
+        """
+        command = {
+            'cmd': 'b.run_compute',
+            'params': kwargs
+        }
         return self.send_command(command)

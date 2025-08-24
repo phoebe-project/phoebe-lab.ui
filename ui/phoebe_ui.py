@@ -12,13 +12,14 @@ class PhoebeParameterWidget:
     """Widget for a single Phoebe parameter with value, adjustment checkbox, and step size."""
     
     def __init__(self, name: str, label: str, value: float, step: float = 0.001,
-                 adjust: bool = False, on_value_changed=None):
-        self.name = name
+                 adjust: bool = False, phoebe_api=None, on_value_changed=None):
+        self.name = name  # This should be the Phoebe twig
         self.label = label
         self.value = value
         self.step = step
         self.adjust = adjust
-        self.on_value_changed = on_value_changed  # Callback for value changes
+        self.phoebe_api = phoebe_api  # Reference to API for setting values
+        self.on_value_changed = on_value_changed  # Optional callback for UI updates
         
         with ui.row().classes('items-center gap-2 w-full'):
             # Parameter label
@@ -32,11 +33,10 @@ class PhoebeParameterWidget:
                 step=step
             ).classes('flex-1 min-w-0')
             
-            # Add value change handler if provided
-            if self.on_value_changed:
-                def handle_change():
-                    self.on_value_changed(self.name, self.value_input.value)
-                self.value_input.on('update:model-value', handle_change)
+            # Add value change handler
+            def handle_change():
+                self._on_value_changed(self.value_input.value)
+            self.value_input.on('update:model-value', handle_change)
             
             # Checkbox for adjustment (moved before step)
             self.adjust_checkbox = ui.checkbox(text='Adjust', value=adjust).classes('flex-shrink-0')
@@ -61,6 +61,30 @@ class PhoebeParameterWidget:
         else:
             self.step_input.disable()
             self.step_input.classes(add='text-gray-400')
+    
+    def _on_value_changed(self, new_value):
+        """Handle parameter value changes by updating Phoebe bundle and calling optional callback."""
+        if new_value is None:
+            return
+            
+        # Update the stored value
+        self.value = new_value
+            
+        # Call API to set the value in Phoebe
+        if self.phoebe_api:
+            try:
+                response = self.phoebe_api.set_value(self.name, new_value)
+                if response.get('status') == 'success':
+                    # Successful update - could add debug notification if needed
+                    pass
+                else:
+                    ui.notify(f'Failed to set {self.name}: {response.get("error", "Unknown error")}', type='negative')
+            except Exception as e:
+                ui.notify(f'Error setting {self.name}: {str(e)}', type='negative')
+        
+        # Call optional callback for additional UI updates
+        if self.on_value_changed:
+            self.on_value_changed(self.name, new_value)
 
 
 class DataTable:
@@ -289,12 +313,44 @@ class DataTable:
                 else:
                     load_section.set_visibility(False)
                     
-                # Tab container for example vs upload
+                # Tab container for synthetic vs example vs upload
                 with ui.tabs().classes('w-full') as tabs:
+                    synthetic_tab = ui.tab('Synthetic data')
                     example_tab = ui.tab('Example Files')
                     upload_tab = ui.tab('Upload File')
                 
-                with ui.tab_panels(tabs, value=example_tab).classes('w-full'):
+                with ui.tab_panels(tabs, value=synthetic_tab).classes('w-full'):
+                    # Synthetic data tab (default)
+                    with ui.tab_panel(synthetic_tab):
+                        ui.label('Define synthetic data parameters for the current system:').classes('mb-4')
+                        
+                        with ui.column().classes('w-full gap-4'):
+                            # Number of points input
+                            n_points_input = ui.number(
+                                label='Number of synthetic phase points',
+                                value=201,
+                                min=50,
+                                max=2000,
+                                step=1,
+                                format='%d'
+                            ).classes('w-full')
+                            
+                            # Phase range inputs
+                            with ui.row().classes('gap-2 w-full'):
+                                phase_min_input = ui.number(
+                                    label='Phase min',
+                                    value=-0.5,
+                                    step=0.1,
+                                    format='%.2f'
+                                ).classes('flex-1')
+                                
+                                phase_max_input = ui.number(
+                                    label='Phase max',
+                                    value=0.5,
+                                    step=0.1,
+                                    format='%.2f'
+                                ).classes('flex-1')
+                    
                     # Example files tab
                     with ui.tab_panel(example_tab):
                         ui.label('Select an example data file:').classes('mb-2')
@@ -379,18 +435,27 @@ class DataTable:
                         ).props('accept=".dat,.txt,.csv"').classes('w-full')
                         file_upload.classes('border-2 border-dashed border-gray-300 rounded-lg p-8 text-center')
             
-            # Data preview section (collapsible, collapsed by default)
+            # Add tab change handler to show/hide preview section
+            def on_tab_change():
+                current_tab = tabs.value
+                # Show preview only for example files and upload tabs
+                preview_expansion.visible = current_tab in [example_tab, upload_tab]
+            
+            tabs.on('update:model-value', lambda: on_tab_change())
+            
+            # Data preview section (hidden by default, shown only for example/upload tabs)
             # ui.separator().classes('my-4')
             
             with ui.expansion('Data Preview', icon='table_view').classes('w-full') as preview_expansion:
                 preview_expansion.open = False  # Collapsed by default
+                preview_expansion.visible = False  # Hidden by default for synthetic data tab
                 
                 preview_container = ui.column().classes('w-full')
                 
                 with preview_container:
                     preview_label = ui.label('No data loaded').classes('text-sm text-gray-600 mb-2')
                     if is_edit:
-                        preview_label.text = f'{existing_dataset["filename"]} ({existing_dataset["length"]} points)'
+                        preview_label.text = f'{existing_dataset["filename"]} ({existing_dataset["n_points"]} points)'
                     
                     # Data preview table
                     preview_table = ui.table(
@@ -404,8 +469,13 @@ class DataTable:
                     ).classes('w-full max-h-40')
                 
                 # Show existing data in preview if editing
-                if is_edit:
-                    self._populate_preview_table(preview_table, existing_dataset['data'])
+                if is_edit and len(existing_dataset.get('times', [])) > 0:
+                    edit_data = {
+                        'times': existing_dataset['times'],
+                        'obs': existing_dataset.get('fluxes', existing_dataset.get('rvs', [])),
+                        'sigmas': existing_dataset['sigmas']
+                    }
+                    self._populate_preview_table(preview_table, edit_data)
             
             # Dialog buttons
             ui.separator().classes('my-4')
@@ -415,7 +485,8 @@ class DataTable:
                     'Save' if is_edit else 'Add',
                     on_click=lambda: self._save_dataset_from_dialog(
                         label_input, kind_select, passband_select, component_select,
-                        dataset_dialog, is_edit, edit_dataset
+                        dataset_dialog, is_edit, edit_dataset,
+                        tabs, synthetic_tab, n_points_input, phase_min_input, phase_max_input
                     ),
                     icon='save'
                 ).classes('bg-blue-500')
@@ -425,15 +496,20 @@ class DataTable:
     def _populate_preview_table(self, preview_table, data):
         """Populate preview table with dataset."""
         rows = []
-        display_count = min(20, len(data['times']))
-        value_key = 'obs' if 'obs' in data else 'value'
         
-        for i in range(display_count):
-            rows.append({
-                'time': round(float(data['times'][i]), 4),
-                'value': round(float(data[value_key][i]), 4),
-                'error': round(float(data['sigmas'][i]), 4)
-            })
+        # Handle raw parsed data format (times, obs, sigmas)
+        if 'times' in data and len(data['times']) > 0:
+            times = data['times']
+            obs = data['obs']
+            sigmas = data['sigmas']
+            display_count = min(20, len(times))
+            
+            for i in range(display_count):
+                rows.append({
+                    'time': round(float(times[i]), 4),
+                    'value': round(float(obs[i]), 4),
+                    'error': round(float(sigmas[i]), 4)
+                })
         
         preview_table.rows = rows
         preview_table.update()
@@ -488,7 +564,9 @@ class DataTable:
             ui.notify(f'Error processing file: {str(e)}', type='error')
     
     def _save_dataset_from_dialog(self, label_input, kind_select,
-                                 passband_select, component_select, dialog, is_edit, edit_dataset):
+                                  passband_select, component_select, dialog, is_edit, edit_dataset,
+                                  tabs=None, synthetic_tab=None, n_points_input=None,
+                                  phase_min_input=None, phase_max_input=None):
         """Save dataset from dialog."""
         dataset = label_input.value.strip()
         
@@ -501,58 +579,81 @@ class DataTable:
             ui.notify(f'Dataset label "{dataset}" already exists', type='error')
             return
         
-        # Get data (either loaded new data or use existing)
-        if hasattr(dialog, '_loaded_data'):
-            data_info = dialog._loaded_data
+        # Check which tab is active to determine data source
+        current_tab = tabs.value
+        
+        # Prepare parameters for _add_dataset
+        add_params = {
+            'dataset': dataset,
+            'kind': kind_select.value,
+            'passband': passband_select.value,
+            'component': component_select.value
+        }
+        
+        if current_tab == synthetic_tab:
+            # For synthetic data
+            npts = int(n_points_input.value)
+            phase_min = float(phase_min_input.value)
+            phase_max = float(phase_max_input.value)
+            
+            if phase_min >= phase_max:
+                ui.notify('Phase min must be less than phase max', type='error')
+                return
+            
+            if npts < 10:
+                ui.notify('Number of points must be at least 10', type='error')
+                return
+            
+            add_params.update({
+                'compute_phases': np.linspace(phase_min, phase_max, npts),
+                'filename': f'synthetic_{kind_select.value}_{npts}pts.meta'
+            })
+            
+        elif hasattr(dialog, '_loaded_data'):
+            # For example files or uploaded files
+            loaded_data = dialog._loaded_data['data']
+            filename = dialog._loaded_data['filename']
+            
+            add_params.update({
+                'times': loaded_data['times'],
+                'sigmas': loaded_data['sigmas'],
+                'filename': filename
+            })
+            
+            # Add kind-specific data
+            if kind_select.value == 'lc':
+                add_params['fluxes'] = loaded_data['obs']
+            elif kind_select.value == 'rv':
+                add_params['rvs'] = loaded_data['obs']
+                
         elif is_edit and edit_dataset in self.datasets:
-            # Use existing data if no new data loaded
+            # For edit without new data, keep existing data
             existing = self.datasets[edit_dataset]
-            data_info = {
-                'data': existing['data'],
-                'filename': existing['filename']
-            }
+            add_params.update({
+                'times': existing.get('times', []),
+                'fluxes': existing.get('fluxes', []),
+                'rvs': existing.get('rvs', []),
+                'sigmas': existing.get('sigmas', []),
+                'compute_phases': existing.get('compute_phases', []),
+                'filename': existing.get('filename', '')
+            })
         else:
-            ui.notify('To add a dataset, you need to load the data first.', type='error')
+            ui.notify('Please provide data or synthetic data parameters.', type='error')
             return
         
+        # Remove old dataset if editing with different name
+        if is_edit and dataset != edit_dataset:
+            del self.datasets[edit_dataset]
+        
+        # Add/update dataset
+        self._add_dataset(**add_params)
+        
         if is_edit:
-            # If label changed, remove old dataset and add with new label
-            if dataset != edit_dataset:
-                # Remove old dataset
-                del self.datasets[edit_dataset]
-                # Add with new label
-                self._add_dataset(
-                    dataset=dataset,
-                    kind=kind_select.value,
-                    passband=passband_select.value,
-                    data=data_info['data'],
-                    filename=data_info['filename'],
-                    component=component_select.value
-                )
-                ui.notify(f'Dataset renamed from "{edit_dataset}" to "{dataset}"', type='positive')
-            else:
-                # Update existing dataset with same label
-                self.datasets[edit_dataset]['kind'] = kind_select.value
-                self.datasets[edit_dataset]['passband'] = passband_select.value
-                self.datasets[edit_dataset]['component'] = component_select.value
-                self.datasets[edit_dataset]['data'] = data_info['data']
-                self.datasets[edit_dataset]['filename'] = data_info['filename']
-                self.datasets[edit_dataset]['length'] = len(data_info['data']['times'])
-                ui.notify(f'Updated dataset "{edit_dataset}"', type='positive')
-        else:
-            # Add new dataset
-            self._add_dataset(
-                dataset=dataset,
-                kind=kind_select.value,
-                passband=passband_select.value,
-                data=data_info['data'],
-                filename=data_info['filename'],
-                component=component_select.value
-            )
+            ui.notify(f'Updated dataset "{dataset}"', type='positive')
         
         dialog.close()
         
-        # Update button states after dialog closes (selection may be cleared)
+        # Update button states after dialog closes
         ui.timer(0.1, lambda: self._update_button_states(), once=True)
     
     def _confirm_remove_dataset(self, dataset, dialog):
@@ -581,99 +682,52 @@ class DataTable:
         }
         return descriptions.get(filename, 'Example data file')
     
-    def _load_example_file(self, file_path: str, dialog, label_input, kind_select, passband_select, component_select):
-        """Load an example file and add to datasets."""
-        try:
-            data = self._parse_data_file(file_path)
-            if data:
-                self._add_dataset(
-                    dataset=label_input.value,
-                    kind=kind_select.value,
-                    passband=passband_select.value,
-                    data=data,
-                    filename=Path(file_path).name,
-                    component=component_select.value
-                )
-                dialog.close()
-        except Exception as e:
-            ui.notify(f'Error loading example file: {str(e)}', type='error')
-    
-    def _handle_file_upload(self, event, dialog, label_input, kind_select, passband_select, component_select):
-        """Handle uploaded file and add to datasets."""
-        try:
-            # Get uploaded file content
-            file_content = event.content.read()
-            file_name = event.name
-            
-            # Convert bytes to string
-            if isinstance(file_content, bytes):
-                file_content = file_content.decode('utf-8')
-            
-            # Parse the content
-            data = self._parse_data_content(file_content)
-            if data:
-                self._add_dataset(
-                    dataset=label_input.value,
-                    kind=kind_select.value,
-                    passband=passband_select.value,
-                    data=data,
-                    filename=file_name,
-                    component=component_select.value
-                )
-                dialog.close()
-                
-        except Exception as e:
-            ui.notify(f'Error processing uploaded file: {str(e)}', type='error')
-    
-    def _add_dataset(self, dataset: str, kind: str, passband: str, data: Dict[str, np.ndarray], filename: str, component: str = 'primary'):
-        """Add a dataset to the collection."""
-        # Validate dataset uniqueness
+    def _add_dataset(self, dataset, kind, **kwargs):
+        """
+        """
+
         if dataset in self.datasets:
             ui.notify(f'Dataset "{dataset}" already exists. Please choose a different name.', type='error')
             return
-        
-        # Store dataset
+
         dataset_info = {
             'kind': kind,
-            'passband': passband,
-            'component': component,
             'dataset': dataset,
-            'data': data,
-            'filename': filename,
-            'length': len(data['times'])
+            'passband': kwargs.get('passband', 'Johnson:V'),
+            'component': kwargs.get('component', None),
+            'compute_phases': kwargs.get('compute_phases', []),
+            'times': kwargs.get('times', []),
+            'fluxes': kwargs.get('fluxes', []),
+            'rvs': kwargs.get('rvs', []),
+            'sigmas': kwargs.get('sigmas', []),
+            'filename': kwargs.get('filename', ''),
+            'n_points': len(kwargs.get('times', [])) or len(kwargs.get('compute_phases', [])),
         }
-        
+
         self.datasets[dataset] = dataset_info
-        
+
         # Update datasets table
         self._update_datasets_table()
-        
+
         # Update button states
         self._update_button_states()
 
-        # Call the API to add the dataset to the bundle:
-        api = self.ui_ref.phoebe_api
-        
-        # Prepare parameters for the dataset (excluding kind which goes as positional arg)
-        params = {
-            'dataset': dataset,
-            'passband': passband,
-            'times': data['times'],
-            'sigmas': data['sigmas'],
-            'overwrite': True
-        }
-
-        # Add kind-specific parameters
-        if kind == 'lc':
-            params['fluxes'] = data['obs']
-        elif kind == 'rv':
-            params['component'] = component
-            params['rvs'] = data['obs']
-
         # Call API with kind as positional argument and rest as kwargs
+        api = self.ui_ref.phoebe_api
+        if kind == 'lc':
+            params = {k: v for k, v in dataset_info.items() if k not in ['kind', 'component', 'filename', 'n_points']}
+        elif kind == 'rv':
+            params = {k: v for k, v in dataset_info.items() if k not in ['kind', 'filename', 'n_points']}
+        else:
+            raise ValueError(f'Unsupported dataset kind: {kind}')
+        
         api.add_dataset(kind, **params)
 
-        ui.notify(f'Added dataset "{dataset}" with {len(data["times"])} data points', type='positive')
+        # Set pblum_mode to 'dataset-scaled' if this is observational data (has times/fluxes/rvs)
+        if len(dataset_info['fluxes']) > 0 or len(dataset_info['rvs']) > 0:
+            api.set_value(f'pblum_mode@{dataset}', 'dataset-scaled')
+
+        ui.notify(f'Added dataset "{dataset}" with {dataset_info["n_points"]} data points', type='positive')
     
     def _update_datasets_table(self):
         """Update the main datasets table."""
@@ -682,8 +736,8 @@ class DataTable:
             rows.append({
                 'dataset': label,
                 'kind': info['kind'].replace('_', ' ').upper(),
-                'passband': info['passband'],
-                'length': info['length']
+                'passband': info.get('passband', ''),
+                'length': info['n_points']
             })
         
         self.datasets_table.rows = rows
@@ -764,6 +818,7 @@ class DataTable:
         if not time_values:
             raise Exception('No valid data points found')
         
+        # Return raw data for conversion to unified format
         return {
             'times': np.array(time_values),
             'obs': np.array(value_values),  # Could be flux, magnitude, or velocity
@@ -771,13 +826,22 @@ class DataTable:
         }
     
     def get_plotting_data(self):
-        """Get data for plotting (returns first available dataset for backward compatibility)."""
+        """Get data for plotting (returns first available observational dataset)."""
         if not self.datasets:
             return None
             
-        # Return first dataset for plotting
-        first_dataset = next(iter(self.datasets.values()))
-        return first_dataset['data']
+        # Return first observational dataset for plotting
+        for dataset_info in self.datasets.values():
+            # Only return datasets that have actual observational data points
+            if len(dataset_info.get('times', [])) > 0:
+                return {
+                    'times': dataset_info['times'],
+                    'obs': dataset_info.get('fluxes', dataset_info.get('rvs', [])),
+                    'sigmas': dataset_info['sigmas']
+                }
+        
+        # If no observational data found, return None
+        return None
 
 
 class LightCurvePlot:
@@ -924,34 +988,44 @@ class LightCurvePlot:
 
         # Add model trace if requested and available
         if self.show_model_checkbox.value and self.model_data is not None:
-            if self.x_axis_dropdown.value == 'phase':
-                # Get period and t0 from UI parameters
-                period = getattr(self.ui_ref, 'period_param', None)
-                t0 = getattr(self.ui_ref, 't0_param', None)
-                period_value = period.value_input.value if period else 2.5
-                t0_value = t0.value_input.value if t0 else 0.0
-                
-                # Convert to phase [-0.5, 0.5] and alias for plotting
-                phase_model = time_to_phase(self.model_data['times'], period_value, t0_value)
-                x_model, flux_model_aliased = alias_phase_for_plotting(
-                    phase_model, self.model_data['obs'], extend_range=0.1
-                )
-            else:
-                x_model = self.model_data['times']
-                flux_model_aliased = self.model_data['obs']
-                
-            if self.y_axis_dropdown.value == 'magnitude':
-                y_model = flux_to_magnitude(flux_model_aliased)
-            else:
-                y_model = flux_model_aliased
+            # The model_data now has structure: {dataset_name: {times, phases, fluxes/rvs}}
+            # Find the first light curve dataset for plotting
+            lc_dataset_data = None
+            for dataset_name, dataset_data in self.model_data.items():
+                if 'fluxes' in dataset_data:  # This is a light curve dataset
+                    lc_dataset_data = dataset_data
+                    break
+            
+            if lc_dataset_data is not None:
+                model_times = np.array(lc_dataset_data.get('times', []))
+                model_phases = np.array(lc_dataset_data.get('phases', []))
+                model_values = np.array(lc_dataset_data.get('fluxes', []))
 
-            fig.add_trace(go.Scatter(
-                x=x_model,
-                y=y_model,
-                mode='lines',
-                line=dict(color='red', width=2),
-                name='Model'
-            ))
+                print(f'Found LC dataset with {len(model_times)} times, {len(model_phases)} phases, {len(model_values)} fluxes')
+
+                has_model = len(model_times) > 0 and len(model_phases) > 0 and len(model_values) > 0
+                print(f'{has_model=} {len(model_times)=} {len(model_phases)=} {len(model_values)=}')
+
+                if has_model:
+                    if self.x_axis_dropdown.value == 'phase':
+                        x_model, y_model = alias_phase_for_plotting(model_phases, model_values, extend_range=0.1)
+                    else:
+                        x_model = model_times
+                        y_model = model_values
+
+                    if self.y_axis_dropdown.value == 'magnitude':
+                        y_model = flux_to_magnitude(y_model)
+                        
+                    # Add model trace to plot
+                    fig.add_trace(go.Scatter(
+                        x=x_model,
+                        y=y_model,
+                        mode='lines',
+                        line=dict(color='red', width=2),
+                        name='Model'
+                    ))
+            else:
+                print("No light curve dataset found in model data")
 
         self.plot.figure = fig
         self.plot.update()
@@ -959,8 +1033,7 @@ class LightCurvePlot:
     def set_model_data(self, model_data):
         """Set model data from external computation."""
         self.model_data = model_data
-        # Auto-enable model visibility when new model is computed
-        self.show_model_checkbox.value = True
+        # self.show_model_checkbox.value = True
         self.update_plot()
 
 
@@ -1009,106 +1082,117 @@ class PhoebeUI:
         self.morphology_select.on('update:model-value', self._on_morphology_change)
         self._current_morphology = 'detached'  # Track current morphology
         
-        with ui.expansion('Observational Data', icon='table_chart', value=False).classes('w-full mb-4'):
+        with ui.expansion('Data', icon='table_chart', value=False).classes('w-full mb-4'):
             self.data_table = DataTable(ui_ref=self)
         
         # Ephemerides parameters
         with ui.expansion('Ephemerides', icon='schedule', value=False).classes('w-full mb-4'):
             # Create parameter widgets for t0 and period
             self.t0_param = PhoebeParameterWidget(
-                name='t0',
+                name='t0_supconj@binary',
                 label='T₀ (BJD)',
                 value=2458000.0,
                 step=0.01,
                 adjust=False,
+                phoebe_api=self.phoebe_api,
                 on_value_changed=self._on_ephemeris_changed
             )
             
             self.period_param = PhoebeParameterWidget(
-                name='period',
+                name='period@binary',
                 label='Period (d)',
                 value=2.5,
                 step=0.0001,
                 adjust=False,
+                phoebe_api=self.phoebe_api,
                 on_value_changed=self._on_ephemeris_changed
             )
         
         # Primary star parameters
         with ui.expansion('Primary Star', icon='wb_sunny', value=False).classes('w-full mb-4'):
             self.mass1_param = PhoebeParameterWidget(
-                name='mass1',
+                name='mass@primary',
                 label='Mass (M₀)',
                 value=1.0,
                 step=0.01,
-                adjust=False
+                adjust=False,
+                phoebe_api=self.phoebe_api
             )
             
             self.radius1_param = PhoebeParameterWidget(
-                name='radius1',
+                name='requiv@primary',
                 label='Radius (R₀)',
                 value=1.0,
                 step=0.01,
-                adjust=False
+                adjust=False,
+                phoebe_api=self.phoebe_api
             )
             
             self.temperature1_param = PhoebeParameterWidget(
-                name='temperature1',
+                name='teff@primary',
                 label='Temperature (K)',
                 value=5778.0,
                 step=10.0,
-                adjust=False
+                adjust=False,
+                phoebe_api=self.phoebe_api
             )
         
         # Secondary star parameters
         with ui.expansion('Secondary Star', icon='wb_sunny', value=False).classes('w-full mb-4'):
             self.mass2_param = PhoebeParameterWidget(
-                name='mass2',
+                name='mass@secondary',
                 label='Mass (M₀)',
                 value=0.8,
                 step=0.01,
-                adjust=False
+                adjust=False,
+                phoebe_api=self.phoebe_api
             )
             
             self.radius2_param = PhoebeParameterWidget(
-                name='radius2',
+                name='requiv@secondary',
                 label='Radius (R₀)',
                 value=0.8,
                 step=0.01,
-                adjust=False
+                adjust=False,
+                phoebe_api=self.phoebe_api
             )
             
             self.temperature2_param = PhoebeParameterWidget(
-                name='temperature2',
+                name='teff@secondary',
                 label='Temperature (K)',
                 value=4800.0,
                 step=10.0,
-                adjust=False
+                adjust=False,
+                phoebe_api=self.phoebe_api
             )
         
         # Orbit parameters
         with ui.expansion('Orbit', icon='trip_origin', value=False).classes('w-full mb-4'):
             self.inclination_param = PhoebeParameterWidget(
-                name='inclination',
+                name='incl@binary',
                 label='Inclination (°)',
                 value=90.0,
                 step=0.1,
-                adjust=False
+                adjust=False,
+                phoebe_api=self.phoebe_api
             )
             
             self.eccentricity_param = PhoebeParameterWidget(
-                name='eccentricity',
+                name='ecc@binary',
                 label='Eccentricity',
                 value=0.0,
                 step=0.01,
-                adjust=False
+                adjust=False,
+                phoebe_api=self.phoebe_api
             )
             
             self.omega_param = PhoebeParameterWidget(
-                name='omega',
+                name='per0@binary',
                 label='Argument of periastron (°)',
                 value=0.0,
                 step=1.0,
-                adjust=False
+                adjust=False,
+                phoebe_api=self.phoebe_api
             )
         
         # Compute controls (outside collapsible container)
@@ -1116,16 +1200,8 @@ class PhoebeUI:
         
         # Compute controls
         ui.label('Compute Controls').classes('text-lg font-bold mb-2')
-        with ui.row().classes('gap-4 items-end w-full'):
+        with ui.row().classes('gap-4 items-center w-full'):
             ui.button('Compute Model', on_click=self.compute_model, icon='calculate').classes('h-12 flex-shrink-0')
-            self.n_points_input = ui.number(
-                label='Number of synthetic phase points',
-                value=201,
-                min=50,
-                max=2000,
-                step=1,
-                format='%d'
-            ).classes('flex-grow min-w-0')  # Use flex-grow instead of flex-1
         
         with ui.row().classes('gap-4 mt-2'):
             ui.button('Fit Parameters', on_click=self.fit_parameters, icon='tune').classes('h-12 flex-shrink-0')
@@ -1329,19 +1405,53 @@ class PhoebeUI:
     
     def compute_model(self):
         """Compute Phoebe model with current parameters."""
-        response = self.phoebe_api.run_command('b.run_compute', params={})
-        if response['status'] == 'success':
-            ui.notify('Model computed successfully', type='positive')
-        else:
-            ui.notify(f"Model computation failed: {response['error']}", type='error')
+        try:
+            # Use default number of points for model computation
+            npts = 201  # Default for model computation
+            self.phoebe_api.set_value('compute_phases@dataset', np.linspace(-0.5, 0.5, npts))
+            response = self.phoebe_api.run_compute()
+            print(f'{response=}')
+            if response['status'] == 'success':
+                model_data = response.get('result', {}).get('model', {})
+
+                # Store model data for plotting
+                if hasattr(self, 'light_curve_plot') and self.light_curve_plot:
+                    self.light_curve_plot.set_model_data(model_data)
+
+                # Show success notification
+                ui.notify('Model computed successfully', type='positive')
+            else:
+                ui.notify(f"Model computation failed: {response.get('error', 'Unknown error')}", type='negative')
+        except Exception as e:
+            ui.notify(f"Error computing model: {str(e)}", type='negative')
 
     def fit_parameters(self):
         """Fit adjustable parameters to data."""
         adjustable_params = []
+        
+        # Check all parameters for adjustment
         if self.t0_param.adjust_checkbox.value:
-            adjustable_params.append('t0')
+            adjustable_params.append('t0_supconj@binary')
         if self.period_param.adjust_checkbox.value:
-            adjustable_params.append('period')
+            adjustable_params.append('period@binary')
+        if self.mass1_param.adjust_checkbox.value:
+            adjustable_params.append('mass@primary')
+        if self.radius1_param.adjust_checkbox.value:
+            adjustable_params.append('requiv@primary')
+        if self.temperature1_param.adjust_checkbox.value:
+            adjustable_params.append('teff@primary')
+        if self.mass2_param.adjust_checkbox.value:
+            adjustable_params.append('mass@secondary')
+        if self.radius2_param.adjust_checkbox.value:
+            adjustable_params.append('requiv@secondary')
+        if self.temperature2_param.adjust_checkbox.value:
+            adjustable_params.append('teff@secondary')
+        if self.inclination_param.adjust_checkbox.value:
+            adjustable_params.append('incl@binary')
+        if self.eccentricity_param.adjust_checkbox.value:
+            adjustable_params.append('ecc@binary')
+        if self.omega_param.adjust_checkbox.value:
+            adjustable_params.append('per0@binary')
         
         if not adjustable_params:
             ui.notify('No parameters marked for adjustment', type='warning')

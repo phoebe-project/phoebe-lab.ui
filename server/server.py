@@ -22,6 +22,7 @@ class PhoebeServer:
         # Command registry
         self.commands = {
             'phoebe.version': self.version,
+            'b.set_value': self.set_value,
             'b.add_dataset': self.add_dataset,
             'b.run_compute': self.run_compute,
             'status': self.status
@@ -72,29 +73,70 @@ class PhoebeServer:
         """Get Phoebe version."""
         return phoebe.__version__
 
+    def set_value(self, **kwargs):
+        """Set a parameter value in the Phoebe bundle."""
+        # Extract required parameters
+        twig = kwargs.pop('twig', None)
+        value = kwargs.pop('value', None)
+        
+        # Validate required parameters
+        if twig is None:
+            raise ValueError("twig parameter is required for set_value")
+        if value is None:
+            raise ValueError("value parameter is required for set_value")
+
+        # Call Phoebe's set_value method
+        self.bundle.set_value(twig, value)
+        return {"status": f"Parameter {twig} set to {value} successfully"}
+
     def add_dataset(self, **kwargs):
         """Add a dataset to the Phoebe bundle."""
         # Extract kind as required positional argument
         if 'kind' not in kwargs:
             raise ValueError("kind parameter is required for add_dataset")
-        
+
         kind = kwargs.pop('kind')
-        
-        # Extract overwrite to avoid duplicate parameter
-        overwrite = kwargs.pop('overwrite', True)
-        
+
         # Call Phoebe's add_dataset with kind as positional arg and rest as kwargs
-        self.bundle.add_dataset(kind, **kwargs, overwrite=overwrite)
+        self.bundle.add_dataset(kind, **kwargs)
+
         return {"status": "Dataset added successfully"}
 
-    def run_compute(self):
-        """Run the Phoebe compute model."""
+    def run_compute(self, **kwargs):
+        """Run the Phoebe compute model.
+        
+        Parameters:
+        -----------
+        **kwargs : dict
+            Optional parameters for the compute (e.g., compute='preview', etc.)
+            
+        Returns:
+        --------
+        dict
+            Dictionary containing model results (fluxes, rvs, etc.)
+        """
 
-        fluxes = self.bundle.get_value('fluxes', context='dataset')
-        self.bundle.set_value('pblum_mode', value='dataset-scaled' if len(fluxes) > 0 else 'component-coupled')
-        self.bundle.run_compute()
+        # Run the computation with any provided kwargs
+        self.bundle.run_compute(**kwargs)
 
-        return self.bundle.get_value('fluxes', context='model')
+        # Return model results
+        result = {}
+
+        # We now need to traverse all datasets and assign the results accordingly:
+        for dataset in self.bundle.datasets:
+            kind = self.bundle[f'{dataset}@dataset'].kind  # 'lc' or 'rv'
+
+            result[dataset] = {}
+            result[dataset]['times'] = self.bundle.get_value('compute_times', dataset=dataset, context='dataset')
+            result[dataset]['phases'] = self.bundle.get_value('compute_phases', dataset=dataset, context='dataset')
+
+            if kind == 'lc':
+                result[dataset]['fluxes'] = self.bundle.get_value('fluxes', dataset=dataset, context='model')
+            if kind == 'rv':
+                # TODO: fix component issue here
+                result[dataset]['rvs'] = self.bundle.get_value('rvs', dataset=dataset, component='primary', context='model')
+            
+        return {"status": "Compute completed successfully", "model": result}
 
     def status(self):
         """Get server status."""
