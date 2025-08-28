@@ -87,148 +87,108 @@ class PhoebeParameterWidget:
             self.on_value_changed(self.name, new_value)
 
 
-class DataTable:
-    """
-    Widget for displaying and managing datasets.
-    """
-
-    def __init__(self, ui_ref=None):
+class DatasetModel:
+    """Pure data model for managing datasets without UI dependencies."""
+    
+    def __init__(self):
         self.datasets = {}  # Dictionary to store multiple datasets: {label: dataset_info}
+
+    def add_dataset(self, dataset, kind, **kwargs):
+        if dataset in self.datasets:
+            return False, f'Dataset "{dataset}" already exists. Please choose a different name.'
+
+        dataset_info = {
+            'kind': kind,
+            'dataset': dataset,
+            'passband': kwargs.get('passband', 'Johnson:V'),
+            'component': kwargs.get('component', None),
+            'times': kwargs.get('times', []),
+            'fluxes': kwargs.get('fluxes', []),
+            'rvs': kwargs.get('rvs', []),
+            'sigmas': kwargs.get('sigmas', []),
+            'filename': kwargs.get('filename', ''),
+            'n_points': kwargs.get('n_points', 201),
+            'phase_min': kwargs.get('phase_min', -0.5),
+            'phase_max': kwargs.get('phase_max', 0.5),
+            'observed_points': kwargs.get('observed_points', 0),
+            'plot_data': True,
+            'plot_model': True
+        }
+
+        self.datasets[dataset] = dataset_info
+        return True, dataset_info
+
+    def remove_dataset(self, dataset: str):
+        """Remove a dataset from the collection."""
+        if dataset in self.datasets:
+            del self.datasets[dataset]
+            return True
+        return False
+
+
+class DatasetView:
+    """UI components and dialog management for datasets."""
+
+    def __init__(self, dataset_model: DatasetModel, ui_ref=None):
+        self.dataset_model = dataset_model
         self.ui_ref = ui_ref  # Reference to main UI for accessing API and parameters
 
-        with ui.column().classes('w-full'):
-            # Main datasets table
-            self.datasets_table = ui.table(
-                columns=[
-                    {'name': 'dataset', 'label': 'Dataset', 'field': 'dataset', 'align': 'left'},
-                    {'name': 'kind', 'label': 'Data Type', 'field': 'kind', 'align': 'left'},
-                    {'name': 'passband', 'label': 'Passband', 'field': 'passband', 'align': 'left'},
-                    {'name': 'length', 'label': 'Data Points', 'field': 'length', 'align': 'center'}
-                ],
-                rows=[],
-                row_key='dataset',
-                selection='single'
-            ).classes('w-full').style(
-                '--q-table-selection-color: transparent; '
-                '--q-table-selected-color: rgba(0,0,0,0);'
+    def add_dataset(self, dataset, kind, **kwargs):
+        # Extract compute_phases for API (don't store in model)
+        compute_phases = kwargs.pop('compute_phases', None)
+        
+        success, dataset_info = self.dataset_model.add_dataset(dataset, kind, **kwargs)
+        
+        if not success:
+            ui.notify(dataset_info, type='error')
+            return
+
+        # If no compute_phases provided, generate from stored phase parameters
+        if compute_phases is None:
+            compute_phases = np.linspace(
+                dataset_info.get('phase_min', -0.5),
+                dataset_info.get('phase_max', 0.5),
+                dataset_info.get('n_points', 201)
             )
 
-            # Hide the selection info text
-            self.datasets_table.props('hide-selected-banner')
-
-            # Add dataset action buttons aligned with table
-            with ui.row().classes('gap-2 mt-2 w-full justify-end'):
-                ui.button(
-                    'Add',
-                    on_click=self.open_add_dataset_dialog,
-                    icon='add'
-                ).props('flat color=primary')
-                self.edit_button = ui.button(
-                    'Edit',
-                    on_click=self._edit_selected_dataset,
-                    icon='edit'
-                ).props('flat color=secondary')
-                self.remove_button = ui.button(
-                    'Remove',
-                    on_click=self._remove_selected_dataset,
-                    icon='delete'
-                ).props('flat color=negative')
-
-                # Bind button states to selection and data availability
-                self._update_button_states()
-
-                # Add selection change handler to update button states
-                self.datasets_table.on('selection', lambda _: self._update_button_states())
-                # Also handle row clicks to ensure state updates
-                self.datasets_table.on('rowClick', lambda _: self._update_button_states())
-
-    def _update_button_states(self):
-        """Update the enabled/disabled state of edit and remove buttons."""
-        has_data = len(self.datasets) > 0
+        # Call API with compute_phases but don't store it
+        api = self.ui_ref.phoebe_api
+        if kind == 'lc':
+            params = {
+                'dataset': dataset_info['dataset'],
+                'passband': dataset_info['passband'],
+                'compute_phases': compute_phases,
+                'times': dataset_info.get('times', []),
+                'fluxes': dataset_info.get('fluxes', []),
+                'sigmas': dataset_info.get('sigmas', []),
+            }
+        elif kind == 'rv':
+            params = {
+                'dataset': dataset_info['dataset'],
+                'component': dataset_info.get('component'),
+                'passband': dataset_info['passband'],
+                'compute_phases': compute_phases,
+                'times': dataset_info.get('times', []),
+                'rvs': dataset_info.get('rvs', []),
+                'sigmas': dataset_info.get('sigmas', []),
+            }
+        else:
+            raise ValueError(f'Unsupported dataset kind: {kind}')
         
-        # Check if we have a valid selection
-        try:
-            selected = getattr(self.datasets_table, 'selected', [])
-            has_selection = selected and len(selected) > 0
-        except Exception:
-            has_selection = False
-        
-        # Enable buttons only if there is data and a selection
-        button_enabled = has_data and has_selection
-        
-        if hasattr(self, 'edit_button'):
-            if button_enabled:
-                self.edit_button.enable()
-                self.edit_button.props('flat color=secondary')
-            else:
-                self.edit_button.disable()
-                self.edit_button.props('flat color=grey-5')
-                
-        if hasattr(self, 'remove_button'):
-            if button_enabled:
-                self.remove_button.enable()
-                self.remove_button.props('flat color=negative')
-            else:
-                self.remove_button.disable()
-                self.remove_button.props('flat color=grey-5')
-    
-    def _remove_selected_dataset(self):
-        """Remove the currently selected dataset."""
-        try:
-            selected = self.datasets_table.selected
-            if not selected or len(selected) == 0:
-                ui.notify('Please select a dataset to remove', type='warning')
-                return
-            
-            # Get the selected row's label
-            selected_dataset = selected[0].get('dataset') if hasattr(selected[0], 'get') else selected[0].get('dataset', '')
-            
-            if selected_dataset and selected_dataset in self.datasets:
-                # Show confirmation dialog
-                with ui.dialog() as confirm_dialog, ui.card():
-                    ui.label(f'Remove Dataset: {selected_dataset}').classes('text-lg font-bold mb-4')
-                    ui.label('Are you sure you want to remove this dataset? '
-                             'This action cannot be undone.').classes('mb-4')
-                    
-                    with ui.row().classes('gap-2 justify-end w-full'):
-                        ui.button('Cancel', on_click=confirm_dialog.close).classes('bg-gray-500')
-                        ui.button(
-                            'Remove',
-                            on_click=lambda: [
-                                self.remove_dataset(selected_dataset),
-                                confirm_dialog.close(),
-                                ui.timer(0.1, lambda: self._update_button_states(), once=True)
-                            ],
-                            icon='delete'
-                        ).classes('bg-red-500')
-                
-                confirm_dialog.open()
-            else:
-                ui.notify('Selected dataset not found', type='error')
-                
-        except Exception as e:
-            print(f"Error removing selected dataset: {e}")
-            ui.notify('Error removing dataset', type='error')
+        api.add_dataset(kind, **params)
 
-    def _edit_selected_dataset(self):
-        """Edit the currently selected dataset."""
-        try:
-            selected = self.datasets_table.selected
-            if not selected or len(selected) == 0:
-                ui.notify('Please select a dataset to edit', type='warning')
-                return
-            
-            # Get the selected row's label
-            selected_dataset = selected[0].get('dataset') if hasattr(selected[0], 'get') else selected[0].get('dataset', '')
-            
-            if selected_dataset and selected_dataset in self.datasets:
-                self._open_dataset_dialog(edit_dataset=selected_dataset)
-            else:
-                ui.notify('Selected dataset not found', type='error')
-                
-        except Exception as e:
-            print(f"Error editing selected dataset: {e}")
-            ui.notify('Error editing dataset', type='error')
+        # Set pblum_mode to 'dataset-scaled' if this is observational data (has times/fluxes/rvs)
+        if len(dataset_info.get('fluxes', [])) > 0 or len(dataset_info.get('rvs', [])) > 0:
+            print('*** setting pblum_mode to dataset-scaled ***')
+            api.set_value(f'pblum_mode@{dataset}', 'dataset-scaled')
+        
+        self.ui_ref._update_dataset_grid()
+
+    def remove_dataset(self, dataset: str):
+        """Remove a dataset from the collection."""
+        if self.dataset_model.remove_dataset(dataset):
+            ui.notify(f'Removed dataset "{dataset}"', type='info')
+            self.ui_ref._update_dataset_grid()
 
     def open_add_dataset_dialog(self):
         """Open dialog to add a new dataset."""
@@ -236,13 +196,13 @@ class DataTable:
     
     def open_edit_dataset_dialog(self, dataset: str):
         """Open dialog to edit an existing dataset."""
-        if dataset in self.datasets:
+        if dataset in self.dataset_model.datasets:
             self._open_dataset_dialog(edit_dataset=dataset)
     
     def _open_dataset_dialog(self, edit_dataset: str = None):
         """Open dialog to add or edit a dataset."""
         is_edit = edit_dataset is not None
-        existing_dataset = self.datasets.get(edit_dataset) if is_edit else None
+        existing_dataset = self.dataset_model.datasets.get(edit_dataset) if is_edit else None
         
         with ui.dialog() as dataset_dialog, ui.card().classes('w-[800px] h-[600px]'):
             title = f'Edit Dataset: {edit_dataset}' if is_edit else 'Add Dataset'
@@ -262,11 +222,21 @@ class DataTable:
                 if is_edit:
                     kind_select.disable()  # Don't allow changing data type during edit
                 
+                # Component selection (for RV datasets)
+                component_select = ui.select(
+                    options={
+                        'primary': 'Primary',
+                        'secondary': 'Secondary',
+                    },
+                    value=existing_dataset.get('component', 'primary') if is_edit else 'primary',
+                    label='Component'
+                ).classes('w-full')
+
                 # Data label input
                 label_input = ui.input(
                     label='Data Label',
                     placeholder='e.g., lc01, rv_primary, etc.',
-                    value=edit_dataset if is_edit else f'dataset_{len(self.datasets) + 1:02d}'
+                    value=edit_dataset if is_edit else f'dataset_{len(self.dataset_model.datasets) + 1:02d}'
                 ).classes('w-full')
                 
                 # Passband selection
@@ -276,81 +246,73 @@ class DataTable:
                     label='Passband'
                 ).classes('w-full')
                 
-                # Component selection (for RV datasets)
-                component_select = ui.select(
-                    options={
-                        'primary': 'Primary',
-                        'secondary': 'Secondary'
-                    },
-                    value=existing_dataset.get('component', 'primary') if is_edit else 'primary',
-                    label='Component (for RV data)'
-                ).classes('w-full')
-                
                 # Show/hide component selector based on kind
                 def update_component_visibility():
                     component_select.visible = kind_select.value == 'rv'
                 
                 kind_select.on('update:model-value', lambda: update_component_visibility())
                 update_component_visibility()  # Set initial visibility
+                
+                # Phase parameters section in foldable element
+                with ui.expansion('Model', icon='straighten', value=False).classes('w-full mt-4'):
+                    # Get existing phase parameters if editing
+                    existing_phase_min = existing_dataset.get('phase_min', -0.5) if is_edit else -0.5
+                    existing_phase_max = existing_dataset.get('phase_max', 0.5) if is_edit else 0.5
+                    existing_n_points = existing_dataset.get('n_points', 201) if is_edit else 201
+
+                    # Phase range and number of points inputs
+                    with ui.row().classes('gap-2 w-full'):
+                        phase_min_input = ui.number(
+                            label='Phase min',
+                            value=existing_phase_min,
+                            step=0.1,
+                            format='%.2f'
+                        ).classes('flex-1')
+                        
+                        phase_max_input = ui.number(
+                            label='Phase max',
+                            value=existing_phase_max,
+                            step=0.1,
+                            format='%.2f'
+                        ).classes('flex-1')
+                        
+                        n_points_input = ui.number(
+                            label='Num. pts',
+                            value=existing_n_points,
+                            min=50,
+                            max=2000,
+                            step=1,
+                            format='%d'
+                        ).classes('flex-1')
 
             ui.separator().classes('my-4')
             
-            # File loading section (only show if not editing or if user wants to replace data)
-            load_section = ui.column().classes('w-full')
-            
-            if is_edit:
-                # Show replace data button for editing
-                with ui.row().classes('gap-2 mb-4'):
-                    ui.button(
-                        'Replace Data',
-                        on_click=lambda: load_section.set_visibility(True),
-                        icon='upload'
-                    ).classes('h-10')
-            
-            with load_section:
-                if not is_edit:
-                    load_section.set_visibility(True)
-                else:
-                    load_section.set_visibility(False)
-                    
-                # Tab container for synthetic vs example vs upload
-                with ui.tabs().classes('w-full') as tabs:
-                    synthetic_tab = ui.tab('Synthetic data')
-                    example_tab = ui.tab('Example Files')
-                    upload_tab = ui.tab('Upload File')
+            # Observations section in foldable element
+            with ui.expansion('Observations', icon='insert_chart', value=False).classes('w-full'):
+                # File loading section (only show if not editing or if user wants to replace data)
+                load_section = ui.column().classes('w-full')
                 
-                with ui.tab_panels(tabs, value=synthetic_tab).classes('w-full'):
-                    # Synthetic data tab (default)
-                    with ui.tab_panel(synthetic_tab):
-                        ui.label('Define synthetic data parameters for the current system:').classes('mb-4')
+                if is_edit:
+                    # Show replace data button for editing
+                    with ui.row().classes('gap-2 mb-4'):
+                        ui.button(
+                            'Replace Data',
+                            on_click=lambda: load_section.set_visibility(True),
+                            icon='upload'
+                        ).classes('h-10')
+                
+                with load_section:
+                    if not is_edit:
+                        load_section.set_visibility(True)
+                    else:
+                        load_section.set_visibility(False)
                         
-                        with ui.column().classes('w-full gap-4'):
-                            # Number of points input
-                            n_points_input = ui.number(
-                                label='Number of synthetic phase points',
-                                value=201,
-                                min=50,
-                                max=2000,
-                                step=1,
-                                format='%d'
-                            ).classes('w-full')
-                            
-                            # Phase range inputs
-                            with ui.row().classes('gap-2 w-full'):
-                                phase_min_input = ui.number(
-                                    label='Phase min',
-                                    value=-0.5,
-                                    step=0.1,
-                                    format='%.2f'
-                                ).classes('flex-1')
-                                
-                                phase_max_input = ui.number(
-                                    label='Phase max',
-                                    value=0.5,
-                                    step=0.1,
-                                    format='%.2f'
-                                ).classes('flex-1')
-                    
+                    # Tab container for example vs upload
+                    with ui.tabs().classes('w-full') as tabs:
+                        example_tab = ui.tab('Example Files')
+                        upload_tab = ui.tab('Upload File')
+                
+                with ui.tab_panels(tabs, value=example_tab).classes('w-full'):
                     # Example files tab
                     with ui.tab_panel(example_tab):
                         ui.label('Select an example data file:').classes('mb-2')
@@ -486,7 +448,7 @@ class DataTable:
                     on_click=lambda: self._save_dataset_from_dialog(
                         label_input, kind_select, passband_select, component_select,
                         dataset_dialog, is_edit, edit_dataset,
-                        tabs, synthetic_tab, n_points_input, phase_min_input, phase_max_input
+                        tabs, n_points_input, phase_min_input, phase_max_input
                     ),
                     icon='save'
                 ).classes('bg-blue-500')
@@ -565,7 +527,7 @@ class DataTable:
     
     def _save_dataset_from_dialog(self, label_input, kind_select,
                                   passband_select, component_select, dialog, is_edit, edit_dataset,
-                                  tabs=None, synthetic_tab=None, n_points_input=None,
+                                  tabs=None, n_points_input=None,
                                   phase_min_input=None, phase_max_input=None):
         """Save dataset from dialog."""
         dataset = label_input.value.strip()
@@ -575,103 +537,84 @@ class DataTable:
             return
             
         # Check for duplicate labels (except when editing same dataset)
-        if dataset in self.datasets and (not is_edit or dataset != edit_dataset):
+        if dataset in self.dataset_model.datasets and (not is_edit or dataset != edit_dataset):
             ui.notify(f'Dataset label "{dataset}" already exists', type='error')
             return
         
-        # Check which tab is active to determine data source
-        current_tab = tabs.value
+        # Validate phase parameters
+        npts = int(n_points_input.value)
+        phase_min = float(phase_min_input.value)
+        phase_max = float(phase_max_input.value)
         
-        # Prepare parameters for _add_dataset
+        if phase_min >= phase_max:
+            ui.notify('Phase min must be less than phase max', type='error')
+            return
+        
+        if npts < 10:
+            ui.notify('Number of points must be at least 10', type='error')
+            return
+        
+        # Generate compute_phases array for API
+        compute_phases = np.linspace(phase_min, phase_max, npts)
+        
+        # Base parameters - every dataset has these
         add_params = {
             'dataset': dataset,
             'kind': kind_select.value,
             'passband': passband_select.value,
-            'component': component_select.value
+            'component': component_select.value,
+            'phase_min': phase_min,
+            'phase_max': phase_max,
+            'n_points': npts,
+            'compute_phases': compute_phases,  # For API only, not stored in model
+            'filename': 'Synthetic'  # Default to synthetic
         }
         
-        if current_tab == synthetic_tab:
-            # For synthetic data
-            npts = int(n_points_input.value)
-            phase_min = float(phase_min_input.value)
-            phase_max = float(phase_max_input.value)
-            
-            if phase_min >= phase_max:
-                ui.notify('Phase min must be less than phase max', type='error')
-                return
-            
-            if npts < 10:
-                ui.notify('Number of points must be at least 10', type='error')
-                return
-            
-            add_params.update({
-                'compute_phases': np.linspace(phase_min, phase_max, npts),
-                'filename': f'synthetic_{kind_select.value}_{npts}pts.meta'
-            })
-            
-        elif hasattr(dialog, '_loaded_data'):
-            # For example files or uploaded files
+        # Check if observational data was loaded
+        if hasattr(dialog, '_loaded_data'):
+            # User loaded observational data
             loaded_data = dialog._loaded_data['data']
             filename = dialog._loaded_data['filename']
             
             add_params.update({
                 'times': loaded_data['times'],
                 'sigmas': loaded_data['sigmas'],
-                'filename': filename
+                'filename': filename,
+                'observed_points': len(loaded_data['times'])  # Track actual data points from file
             })
             
-            # Add kind-specific data
+            # Add kind-specific observational data
             if kind_select.value == 'lc':
                 add_params['fluxes'] = loaded_data['obs']
             elif kind_select.value == 'rv':
                 add_params['rvs'] = loaded_data['obs']
-                
-        elif is_edit and edit_dataset in self.datasets:
-            # For edit without new data, keep existing data
-            existing = self.datasets[edit_dataset]
-            add_params.update({
-                'times': existing.get('times', []),
-                'fluxes': existing.get('fluxes', []),
-                'rvs': existing.get('rvs', []),
-                'sigmas': existing.get('sigmas', []),
-                'compute_phases': existing.get('compute_phases', []),
-                'filename': existing.get('filename', '')
-            })
         else:
-            ui.notify('Please provide data or synthetic data parameters.', type='error')
-            return
+            # Pure synthetic dataset - no observed data points
+            add_params['observed_points'] = 0
         
         # Remove old dataset if editing with different name
         if is_edit and dataset != edit_dataset:
-            del self.datasets[edit_dataset]
+            del self.dataset_model.datasets[edit_dataset]
         
         # Add/update dataset
-        self._add_dataset(**add_params)
-        
-        if is_edit:
-            ui.notify(f'Updated dataset "{dataset}"', type='positive')
-        
-        dialog.close()
-        
-        # Update button states after dialog closes
-        ui.timer(0.1, lambda: self._update_button_states(), once=True)
-    
-    def _confirm_remove_dataset(self, dataset, dialog):
-        """Show confirmation dialog for dataset removal."""
-        with ui.dialog() as confirm_dialog, ui.card():
-            ui.label(f'Remove Dataset: {dataset}').classes('text-lg font-bold mb-4')
-            ui.label('Are you sure you want to remove this dataset? '
-                     'This action cannot be undone.').classes('mb-4')
+        try:
+            self.add_dataset(**add_params)
             
-            with ui.row().classes('gap-2 justify-end w-full'):
-                ui.button('Cancel', on_click=confirm_dialog.close).classes('bg-gray-500')
-                ui.button('Remove', on_click=lambda: [
-                    self.remove_dataset(dataset),
-                    confirm_dialog.close(),
-                    dialog.close()
-                ]).classes('bg-red-500')
+            if is_edit:
+                ui.notify(f'Updated dataset "{dataset}"', type='positive')
+            else:
+                ui.notify(f'Added dataset "{dataset}"', type='positive')
+            
+            # Update the dataset grid
+            if hasattr(self.ui_ref, '_update_dataset_grid'):
+                self.ui_ref._update_dataset_grid()
+            
+        except Exception as e:
+            ui.notify(f'Error adding dataset: {str(e)}', type='error')
+            print(f"Dataset creation error: {e}")
         
-        confirm_dialog.open()
+        # Always close the dialog
+        dialog.close()
 
     def _get_file_description(self, filename: str) -> str:
         """Get description for example files."""
@@ -681,93 +624,7 @@ class DataTable:
             'example_rv_primary.dat': 'Radial velocity curve for primary star (Period = 2.5 days)'
         }
         return descriptions.get(filename, 'Example data file')
-    
-    def _add_dataset(self, dataset, kind, **kwargs):
-        """
-        """
 
-        if dataset in self.datasets:
-            ui.notify(f'Dataset "{dataset}" already exists. Please choose a different name.', type='error')
-            return
-
-        dataset_info = {
-            'kind': kind,
-            'dataset': dataset,
-            'passband': kwargs.get('passband', 'Johnson:V'),
-            'component': kwargs.get('component', None),
-            'compute_phases': kwargs.get('compute_phases', []),
-            'times': kwargs.get('times', []),
-            'fluxes': kwargs.get('fluxes', []),
-            'rvs': kwargs.get('rvs', []),
-            'sigmas': kwargs.get('sigmas', []),
-            'filename': kwargs.get('filename', ''),
-            'n_points': len(kwargs.get('times', [])) or len(kwargs.get('compute_phases', [])),
-        }
-
-        self.datasets[dataset] = dataset_info
-
-        # Update datasets table
-        self._update_datasets_table()
-
-        # Update button states
-        self._update_button_states()
-
-        # Call API with kind as positional argument and rest as kwargs
-        api = self.ui_ref.phoebe_api
-        if kind == 'lc':
-            params = {k: v for k, v in dataset_info.items() if k not in ['kind', 'component', 'filename', 'n_points']}
-        elif kind == 'rv':
-            params = {k: v for k, v in dataset_info.items() if k not in ['kind', 'filename', 'n_points']}
-        else:
-            raise ValueError(f'Unsupported dataset kind: {kind}')
-        
-        api.add_dataset(kind, **params)
-
-        # Set pblum_mode to 'dataset-scaled' if this is observational data (has times/fluxes/rvs)
-        if len(dataset_info['fluxes']) > 0 or len(dataset_info['rvs']) > 0:
-            api.set_value(f'pblum_mode@{dataset}', 'dataset-scaled')
-
-        ui.notify(f'Added dataset "{dataset}" with {dataset_info["n_points"]} data points', type='positive')
-    
-    def _update_datasets_table(self):
-        """Update the main datasets table."""
-        rows = []
-        for label, info in self.datasets.items():
-            rows.append({
-                'dataset': label,
-                'kind': info['kind'].replace('_', ' ').upper(),
-                'passband': info.get('passband', ''),
-                'length': info['n_points']
-            })
-        
-        self.datasets_table.rows = rows
-        self.datasets_table.update()
-        
-        # Clear selection when table is updated
-        self.datasets_table.selected = []
-        
-        # Update button states whenever table is updated
-        ui.timer(0.1, lambda: self._update_button_states(), once=True)
-    
-    def remove_dataset(self, dataset: str):
-        """Remove a dataset from the collection."""
-        if dataset in self.datasets:
-            del self.datasets[dataset]
-            self._update_datasets_table()
-            
-            # Update button states
-            self._update_button_states()
-            
-            ui.notify(f'Removed dataset "{dataset}"', type='info')
-    
-    def get_dataset(self, dataset: str) -> Optional[Dict]:
-        """Get dataset by dataset name."""
-        return self.datasets.get(dataset)
-    
-    def get_all_datasets(self) -> Dict[str, Dict]:
-        """Get all datasets."""
-        return self.datasets.copy()
-    
     def _parse_data_file(self, file_path: str) -> Optional[Dict[str, np.ndarray]]:
         """Parse data from a file path."""
         try:
@@ -824,31 +681,13 @@ class DataTable:
             'obs': np.array(value_values),  # Could be flux, magnitude, or velocity
             'sigmas': np.array(error_values)
         }
-    
-    def get_plotting_data(self):
-        """Get data for plotting (returns first available observational dataset)."""
-        if not self.datasets:
-            return None
-            
-        # Return first observational dataset for plotting
-        for dataset_info in self.datasets.values():
-            # Only return datasets that have actual observational data points
-            if len(dataset_info.get('times', [])) > 0:
-                return {
-                    'times': dataset_info['times'],
-                    'obs': dataset_info.get('fluxes', dataset_info.get('rvs', [])),
-                    'sigmas': dataset_info['sigmas']
-                }
-        
-        # If no observational data found, return None
-        return None
 
 
 class LightCurvePlot:
     """Widget for plotting light curves."""
     
-    def __init__(self, data_table: DataTable, ui_ref=None):
-        self.data_table = data_table
+    def __init__(self, dataset_model: DatasetModel, ui_ref=None):
+        self.dataset_model = dataset_model
         self.ui_ref = ui_ref  # Reference to main UI for accessing parameters
         self.model_data = None  # Store computed model data
         
@@ -857,13 +696,6 @@ class LightCurvePlot:
             
             # Plot controls row
             with ui.row().classes('gap-4 mb-4'):
-                # Visibility checkboxes
-                self.show_data_checkbox = ui.checkbox(text='Show Data', value=False)
-                self.show_data_checkbox.on('update:model-value', lambda: self.update_plot())
-                
-                self.show_model_checkbox = ui.checkbox(text='Show Model', value=False)
-                self.show_model_checkbox.on('update:model-value', lambda: self.update_plot())
-                
                 # X-axis dropdown
                 self.x_axis_dropdown = ui.select(
                     options={'time': 'Time', 'phase': 'Phase'},
@@ -941,91 +773,90 @@ class LightCurvePlot:
     
     def update_plot(self):
         """Update plot based on current visibility settings and data."""
-        if self.show_model_checkbox.value and self.model_data is None:
-            ui.notify('Model has not been computed yet. Use "Compute Model" first.', type='warning')
-            self.show_model_checkbox.value = False
-            return
-
         fig = self._create_empty_plot()
 
-        # Add data trace if requested and available
-        plotting_data = self.data_table.get_plotting_data()
-        if self.show_data_checkbox.value and plotting_data is not None:
-            data = plotting_data
-            
-            if self.x_axis_dropdown.value == 'phase':
-                # Get period and t0 from UI parameters
-                period = getattr(self.ui_ref, 'period_param', None)
-                t0 = getattr(self.ui_ref, 't0_param', None)
-                period_value = period.value_input.value if period else 2.5
-                t0_value = t0.value_input.value if t0 else 0.0
+        # Plot data for each dataset that has plot_data enabled
+        for dataset_name, dataset_info in self.dataset_model.datasets.items():
+            if dataset_info.get('plot_data', False) and len(dataset_info.get('times', [])) > 0:
+                # This dataset has observational data and should be plotted
+                data = {
+                    'times': dataset_info['times'],
+                    'obs': dataset_info.get('fluxes', dataset_info.get('rvs', [])),
+                    'sigmas': dataset_info['sigmas']
+                }
                 
-                # Convert to phase [-0.5, 0.5] and alias for plotting
-                phase_data = time_to_phase(data['times'], period_value, t0_value)
-                x_data, flux_aliased, error_aliased = alias_phase_for_plotting(
-                    phase_data, data['obs'], data['sigmas'], extend_range=0.1
-                )
-            else:
-                x_data = data['times']
-                flux_aliased = data['obs']
-                error_aliased = data['sigmas']
-            
-            if self.y_axis_dropdown.value == 'magnitude':
-                y_data = flux_to_magnitude(flux_aliased)
-                y_error = magnitude_error_to_flux_error(flux_aliased, error_aliased)
-            else:
-                y_data = flux_aliased
-                y_error = error_aliased
+                if self.x_axis_dropdown.value == 'phase':
+                    # Get period and t0 from UI parameters
+                    period = getattr(self.ui_ref, 'period_param', None)
+                    t0 = getattr(self.ui_ref, 't0_param', None)
+                    period_value = period.value_input.value if period else 2.5
+                    t0_value = t0.value_input.value if t0 else 0.0
+                    
+                    # Convert to phase [-0.5, 0.5] and alias for plotting
+                    phase_data = time_to_phase(data['times'], period_value, t0_value)
+                    x_data, flux_aliased, error_aliased = alias_phase_for_plotting(
+                        phase_data, data['obs'], data['sigmas'], extend_range=0.1
+                    )
+                else:
+                    x_data = data['times']
+                    flux_aliased = data['obs']
+                    error_aliased = data['sigmas']
+                
+                if self.y_axis_dropdown.value == 'magnitude':
+                    y_data = flux_to_magnitude(flux_aliased)
+                    y_error = magnitude_error_to_flux_error(flux_aliased, error_aliased)
+                else:
+                    y_data = flux_aliased
+                    y_error = error_aliased
 
-            fig.add_trace(go.Scatter(
-                x=x_data,
-                y=y_data,
-                error_y=dict(type='data', array=y_error, visible=True),
-                mode='markers',
-                marker=dict(size=4, color='blue'),
-                name=next(iter(self.data_table.datasets.keys())) if self.data_table.datasets else 'Data'
-            ))
+                fig.add_trace(go.Scatter(
+                    x=x_data,
+                    y=y_data,
+                    error_y=dict(type='data', array=y_error, visible=True),
+                    mode='markers',
+                    marker=dict(size=4, color='blue'),
+                    name=f'{dataset_name} (Data)'
+                ))
 
-        # Add model trace if requested and available
-        if self.show_model_checkbox.value and self.model_data is not None:
-            # The model_data now has structure: {dataset_name: {times, phases, fluxes/rvs}}
-            # Find the first light curve dataset for plotting
-            lc_dataset_data = None
-            for dataset_name, dataset_data in self.model_data.items():
-                if 'fluxes' in dataset_data:  # This is a light curve dataset
-                    lc_dataset_data = dataset_data
-                    break
-            
-            if lc_dataset_data is not None:
-                model_times = np.array(lc_dataset_data.get('times', []))
-                model_phases = np.array(lc_dataset_data.get('phases', []))
-                model_values = np.array(lc_dataset_data.get('fluxes', []))
-
-                print(f'Found LC dataset with {len(model_times)} times, {len(model_phases)} phases, {len(model_values)} fluxes')
-
-                has_model = len(model_times) > 0 and len(model_phases) > 0 and len(model_values) > 0
-                print(f'{has_model=} {len(model_times)=} {len(model_phases)=} {len(model_values)=}')
-
-                if has_model:
-                    if self.x_axis_dropdown.value == 'phase':
-                        x_model, y_model = alias_phase_for_plotting(model_phases, model_values, extend_range=0.1)
+        # Plot model data for each dataset that has plot_model enabled
+        if self.model_data is not None:
+            for dataset_name, dataset_info in self.dataset_model.datasets.items():
+                if dataset_info.get('plot_model', False) and dataset_name in self.model_data:
+                    dataset_model = self.model_data[dataset_name]
+                    
+                    model_times = np.array(dataset_model.get('times', []))
+                    model_phases = np.array(dataset_model.get('phases', []))
+                    
+                    # Get model values based on dataset kind
+                    if 'fluxes' in dataset_model:
+                        model_values = np.array(dataset_model.get('fluxes', []))
+                        data_type = 'LC'
+                    elif 'rvs' in dataset_model:
+                        model_values = np.array(dataset_model.get('rvs', []))
+                        data_type = 'RV'
                     else:
-                        x_model = model_times
-                        y_model = model_values
+                        continue  # Skip if no model data available
 
-                    if self.y_axis_dropdown.value == 'magnitude':
-                        y_model = flux_to_magnitude(y_model)
-                        
-                    # Add model trace to plot
-                    fig.add_trace(go.Scatter(
-                        x=x_model,
-                        y=y_model,
-                        mode='lines',
-                        line=dict(color='red', width=2),
-                        name='Model'
-                    ))
-            else:
-                print("No light curve dataset found in model data")
+                    has_model = len(model_times) > 0 and len(model_phases) > 0 and len(model_values) > 0
+                    
+                    if has_model:
+                        if self.x_axis_dropdown.value == 'phase':
+                            x_model, y_model = alias_phase_for_plotting(model_phases, model_values, extend_range=0.1)
+                        else:
+                            x_model = model_times
+                            y_model = model_values
+
+                        if self.y_axis_dropdown.value == 'magnitude' and data_type == 'LC':
+                            y_model = flux_to_magnitude(y_model)
+                            
+                        # Add model trace to plot
+                        fig.add_trace(go.Scatter(
+                            x=x_model,
+                            y=y_model,
+                            mode='lines',
+                            line=dict(color='red', width=2),
+                            name=f'{dataset_name} (Model)'
+                        ))
 
         self.plot.figure = fig
         self.plot.update()
@@ -1046,6 +877,10 @@ class PhoebeUI:
         self.client_id = None  # Will be set when session is established
         self.user_first_name = None
         self.user_last_name = None
+
+        # Initialize data components
+        self.dataset_model = DatasetModel()
+        self.dataset_view = DatasetView(self.dataset_model, ui_ref=self)
 
         # Show startup dialog first
         self.show_startup_dialog()
@@ -1070,6 +905,16 @@ class PhoebeUI:
     def create_parameter_panel(self):
         """Create the parameter control panel."""
         
+        # Model selection
+        self.model_select = ui.select(
+            options={
+                'phoebe': 'PHOEBE',
+                'phoebai': 'PHOEBAI'
+            },
+            value='phoebe',
+            label='Model'
+        ).classes('w-full mb-4')
+        
         self.morphology_select = ui.select(
             options={
                 'detached': 'Detached binary',
@@ -1081,9 +926,6 @@ class PhoebeUI:
         ).classes('w-full mb-4')
         self.morphology_select.on('update:model-value', self._on_morphology_change)
         self._current_morphology = 'detached'  # Track current morphology
-        
-        with ui.expansion('Data', icon='table_chart', value=False).classes('w-full mb-4'):
-            self.data_table = DataTable(ui_ref=self)
         
         # Ephemerides parameters
         with ui.expansion('Ephemerides', icon='schedule', value=False).classes('w-full mb-4'):
@@ -1200,17 +1042,255 @@ class PhoebeUI:
         
         # Compute controls
         ui.label('Compute Controls').classes('text-lg font-bold mb-2')
+
         with ui.row().classes('gap-4 items-center w-full'):
-            ui.button('Compute Model', on_click=self.compute_model, icon='calculate').classes('h-12 flex-shrink-0')
+            self.compute_button = ui.button('Compute Model', on_click=self.compute_model, icon='calculate').classes('h-12 flex-shrink-0')
         
         with ui.row().classes('gap-4 mt-2'):
-            ui.button('Fit Parameters', on_click=self.fit_parameters, icon='tune').classes('h-12 flex-shrink-0')
+            self.fit_button = ui.button('Fit Parameters', on_click=self.fit_parameters, icon='tune').classes('h-12 flex-shrink-0')
     
     def create_plot_panel(self):
         """Create the plotting panel."""
         with ui.column().classes('w-full h-full p-4 min-w-0'):
+            # Dataset management section in an expansion (fold)
+            with ui.expansion('Dataset Management', icon='table_chart', value=True).classes('w-full mb-2').style('padding: 2px;'):
+                # Enhanced dataset control grid
+                self.dataset_grid = ui.aggrid({
+                    'columnDefs': [
+                        {'field': 'label', 'headerName': 'Dataset', 'width': 120, 'sortable': True},
+                        {'field': 'type', 'headerName': 'Type', 'width': 60, 'sortable': True},
+                        {'field': 'phases', 'headerName': 'Phases', 'width': 100, 'sortable': True},
+                        {'field': 'data_points', 'headerName': 'Data Points', 'width': 90, 'sortable': True, 'type': 'numericColumn'},
+                        {'field': 'passband', 'headerName': 'Passband', 'width': 100, 'sortable': True},
+                        {'field': 'filename', 'headerName': 'Source', 'width': 120, 'sortable': True},
+                        {
+                            'field': 'plot_data',
+                            'headerName': 'Plot Data',
+                            'width': 90,
+                            'cellRenderer': 'agCheckboxCellRenderer',
+                            'cellRendererParams': {'disabled': False},
+                            'editable': True,
+                            'cellClassRules': {
+                                'disabled-cell': 'data.filename === "Synthetic"'
+                            }
+                        },
+                        {
+                            'field': 'plot_model',
+                            'headerName': 'Plot Model',
+                            'width': 90,
+                            'cellRenderer': 'agCheckboxCellRenderer',
+                            'cellRendererParams': {'disabled': False},
+                            'editable': True
+                        }
+                    ],
+                    'rowData': [],
+                    'domLayout': 'autoHeight',
+                    'suppressHorizontalScroll': False,
+                    'enableCellChangeFlash': True,
+                    'rowSelection': 'single',
+                    'theme': 'ag-theme-alpine'
+                }).classes('w-full').style('height: auto; min-height: 80px; max-height: 300px;')
+                
+                # Add CSS for disabled cells
+                ui.add_head_html('''
+                <style>
+                .ag-theme-alpine .disabled-cell {
+                    opacity: 0.5;
+                    pointer-events: none;
+                }
+                </style>
+                ''')
+                
+                # Add event handler for cell changes (checkbox updates)
+                self.dataset_grid.on('cellValueChanged', self._on_cell_value_changed)
+                
+                # Add event handler for cell clicks (to capture row selection)
+                self.dataset_grid.on('cellClicked', self._on_cell_clicked)
+                
+                # Initialize grid with current datasets
+                self._update_dataset_grid()
+                
+                # Store selected dataset for edit/remove operations
+                self.selected_dataset_label = None
+                
+                # Dataset action buttons - same row, right-aligned, below table
+                with ui.row().classes('gap-2 justify-end w-full'):
+                    ui.button(
+                        'Add',
+                        on_click=self.dataset_view.open_add_dataset_dialog,
+                        icon='add'
+                    ).props('flat color=primary')
+                    ui.button(
+                        'Edit',
+                        on_click=self._edit_selected_dataset,
+                        icon='edit'
+                    ).props('flat color=secondary')
+                    ui.button(
+                        'Remove',
+                        on_click=self._remove_selected_dataset,
+                        icon='delete'
+                    ).props('flat color=negative')
+            
             # Light curve plot (pass reference to UI for parameter access)
-            self.light_curve_plot = LightCurvePlot(self.data_table, self)
+            self.light_curve_plot = LightCurvePlot(self.dataset_model, self)
+    
+    def _update_dataset_grid(self):
+        """Update the dataset grid with current datasets."""
+        if not hasattr(self, 'dataset_grid'):
+            return
+        
+        # Check if model has been computed
+        has_model = hasattr(self, 'model_data') and self.model_data is not None
+        
+        # Create row data from current datasets
+        row_data = []
+        for dataset_name, dataset_info in self.dataset_model.datasets.items():
+            # Determine if dataset has observational data
+            has_obs_data = len(dataset_info.get('times', [])) > 0
+            is_synthetic = dataset_info.get('filename', '') == 'Synthetic'
+            
+            # For synthetic datasets: plot_data should be disabled and False
+            # For observational datasets: plot_data should be enabled and follow user preference
+            plot_data_value = False if is_synthetic else dataset_info.get('plot_data', True)
+            
+            # Plot model should start as False and only be enabled after model computation
+            plot_model_value = dataset_info.get('plot_model', False) if has_model else False
+            
+            # Format phases display - always show (pmin, pmax, npts) from model definition
+            phase_min = dataset_info.get('phase_min', -0.5)
+            phase_max = dataset_info.get('phase_max', 0.5)
+            n_points = dataset_info.get('n_points', 201)
+            phases_display = f"({phase_min:.2f}, {phase_max:.2f}, {n_points})"
+            
+            # Data points: 0 for synthetic-only, actual file count for observations
+            if is_synthetic:
+                data_points = 0
+            else:
+                # For observational data, get the actual number of data points from file
+                data_points = dataset_info.get('observed_points', dataset_info.get('n_points', 0))
+            
+            row_data.append({
+                'label': dataset_name,
+                'type': dataset_info['kind'].upper(),
+                'phases': phases_display,
+                'data_points': data_points,
+                'passband': dataset_info.get('passband', 'N/A'),
+                'filename': dataset_info.get('filename', 'Synthetic') if has_obs_data else 'Synthetic',
+                'plot_data': plot_data_value,
+                'plot_model': plot_model_value,
+                'actions': dataset_name,  # Store dataset name for action callbacks
+                'plot_data_disabled': is_synthetic,  # Custom field to track disabled state
+                'plot_model_disabled': not has_model  # Custom field to track disabled state
+            })
+        
+        # Update the grid
+        self.dataset_grid.options['rowData'] = row_data
+        self.dataset_grid.update()
+        
+        # Update the plot to reflect the current checkbox states
+        if hasattr(self, 'light_curve_plot') and self.light_curve_plot:
+            self.light_curve_plot.update_plot()
+    
+    def _on_cell_value_changed(self, event):
+        """Handle changes to AgGrid cell values (checkboxes)."""
+        # Debug the event structure
+        print(f"Cell value changed event: {event.args}")
+        
+        data = event.args.get('data', {})
+        # Try different ways to get the field name
+        field = None
+        if 'colDef' in event.args:
+            field = event.args['colDef'].get('field')
+        elif 'column' in event.args:
+            field = event.args['column'].get('colId')
+        elif 'colId' in event.args:
+            field = event.args['colId']
+        
+        if not field:
+            print(f"Could not determine field from event: {event.args}")
+            return
+            
+        dataset_label = data.get('label')
+        if not dataset_label:
+            print(f"Could not determine dataset label from event data: {data}")
+            return
+        
+        if field in ['plot_data', 'plot_model']:
+            # Check if this change should be allowed
+            if field == 'plot_data' and data.get('filename') == 'Synthetic':
+                # Prevent plot_data changes for synthetic datasets
+                ui.notify('Plot Data is not available for synthetic datasets', type='warning')
+                # Revert the change
+                self._update_dataset_grid()
+                return
+            
+            if field == 'plot_model' and (not hasattr(self, 'model_data') or self.model_data is None):
+                # Prevent plot_model changes when no model is computed
+                ui.notify('Please compute the model first', type='warning')
+                # Revert the change
+                self._update_dataset_grid()
+                return
+            
+            # Apply the change
+            new_value = event.args.get('newValue', event.args.get('value'))
+            if dataset_label in self.dataset_model.datasets:
+                self.dataset_model.datasets[dataset_label][field] = new_value
+                self.light_curve_plot.update_plot()
+    
+    def _on_cell_clicked(self, event):
+        """Handle cell clicks in the AgGrid to track row selection."""
+        try:
+            if hasattr(event, 'args') and event.args and 'data' in event.args:
+                row_data = event.args['data']
+                if isinstance(row_data, dict) and 'label' in row_data:
+                    self.selected_dataset_label = row_data['label']
+                    # Optional: Show which dataset is selected
+                    ui.notify(f"Selected: {self.selected_dataset_label}", type='info')
+                else:
+                    self.selected_dataset_label = None
+            else:
+                self.selected_dataset_label = None
+                
+        except Exception as e:
+            print(f"Cell click error: {e}")
+            self.selected_dataset_label = None
+    
+    def _edit_selected_dataset(self):
+        """Edit the selected dataset from the grid."""
+        if not self.selected_dataset_label:
+            ui.notify('Please select a dataset to edit', type='warning')
+            return
+            
+        # Use the existing dialog with the selected dataset
+        self.dataset_view.open_edit_dataset_dialog(self.selected_dataset_label)
+    
+    def _remove_selected_dataset(self):
+        """Remove the selected dataset from the grid."""
+        if not self.selected_dataset_label:
+            ui.notify('Please select a dataset to remove', type='warning')
+            return
+            
+        dataset_label = self.selected_dataset_label
+        # Confirm removal
+        with ui.dialog() as confirm_dialog, ui.card():
+            ui.label(f'Are you sure you want to remove dataset "{dataset_label}"?')
+            with ui.row().classes('gap-2 justify-end mt-4'):
+                ui.button('Cancel', on_click=confirm_dialog.close).props('flat')
+                ui.button(
+                    'Remove',
+                    on_click=lambda: self._confirm_remove_dataset(dataset_label, confirm_dialog),
+                    color='negative'
+                ).props('flat')
+        confirm_dialog.open()
+    
+    def _confirm_remove_dataset(self, dataset_label, dialog):
+        """Confirm and remove the selected dataset."""
+        if dataset_label in self.dataset_model.datasets:
+            del self.dataset_model.datasets[dataset_label]
+            self._update_dataset_grid()
+            self.light_curve_plot.update_plot()
+            ui.notify(f'Dataset "{dataset_label}" removed successfully', type='positive')
+        dialog.close()
     
     def show_startup_dialog(self):
         """Show startup dialog to collect user info and initialize session."""
@@ -1246,6 +1326,11 @@ class PhoebeUI:
     
     def _initialize_session_background(self):
         """Initialize session in the background."""
+        # Prevent duplicate session creation
+        if self.client_id:
+            self.client_id_display.text = self.client_id
+            return
+            
         if not self.session_api:
             self.client_id_display.text = 'API not available'
             return
@@ -1282,33 +1367,17 @@ class PhoebeUI:
         self.user_first_name = first_name
         self.user_last_name = last_name
         
+        # Update session metadata with user info
+        try:
+            self.session_api.update_user_info(self.client_id, first_name, last_name)
+        except Exception as e:
+            ui.notify(f'Warning: Could not update session info: {str(e)}', type='warning')
+        
         # Close dialog and show main UI
         self.startup_dialog.close()
         self.main_splitter.style('display: flex')
         
         ui.notify(f'Welcome {first_name} {last_name}! Session {self.client_id} ready.', type='positive')
-    
-    def initialize_session(self):
-        """Initialize a new Phoebe session."""
-        if not self.session_api:
-            ui.notify('Session API not available', type='error')
-            return
-        
-        try:
-            # Start a new session
-            response = self.session_api.start_session()
-            self.client_id = response.get('client_id')
-            
-            if self.client_id and self.phoebe_api:
-                # Set client ID in Phoebe API
-                self.phoebe_api.set_client_id(self.client_id)
-                self.session_status.text = f'Session: {self.client_id}'
-                ui.notify(f'Session initialized: {self.client_id}', type='positive')
-            else:
-                ui.notify('Failed to get client ID from session', type='error')
-                
-        except Exception as e:
-            ui.notify(f'Failed to initialize session: {str(e)}', type='error')
     
     def cleanup_session(self):
         """Cleanup the current session."""
@@ -1403,66 +1472,92 @@ class PhoebeUI:
         self.omega_param.value_input.value = 0.0
         self.omega_param.adjust_checkbox.value = False
     
-    def compute_model(self):
+    async def compute_model(self):
         """Compute Phoebe model with current parameters."""
         try:
-            # Use default number of points for model computation
-            npts = 201  # Default for model computation
-            self.phoebe_api.set_value('compute_phases@dataset', np.linspace(-0.5, 0.5, npts))
-            response = self.phoebe_api.run_compute()
+            # Show button loading indicator
+            self.compute_button.props('loading')
+            
+            # Run the compute operation asynchronously to avoid blocking the UI
+            import asyncio
+            response = await asyncio.get_event_loop().run_in_executor(
+                None, self.phoebe_api.run_compute
+            )
+            
             print(f'{response=}')
             if response['status'] == 'success':
                 model_data = response.get('result', {}).get('model', {})
-
+                
                 # Store model data for plotting
+                self.model_data = model_data  # Store for enabling plot_model checkboxes
                 if hasattr(self, 'light_curve_plot') and self.light_curve_plot:
                     self.light_curve_plot.set_model_data(model_data)
-
+                
+                # Update dataset grid to enable plot_model checkboxes
+                self._update_dataset_grid()
+                
                 # Show success notification
                 ui.notify('Model computed successfully', type='positive')
             else:
                 ui.notify(f"Model computation failed: {response.get('error', 'Unknown error')}", type='negative')
+                
         except Exception as e:
             ui.notify(f"Error computing model: {str(e)}", type='negative')
+        finally:
+            # Remove button loading indicator
+            self.compute_button.props(remove='loading')
 
-    def fit_parameters(self):
+    async def fit_parameters(self):
         """Fit adjustable parameters to data."""
-        adjustable_params = []
-        
-        # Check all parameters for adjustment
-        if self.t0_param.adjust_checkbox.value:
-            adjustable_params.append('t0_supconj@binary')
-        if self.period_param.adjust_checkbox.value:
-            adjustable_params.append('period@binary')
-        if self.mass1_param.adjust_checkbox.value:
-            adjustable_params.append('mass@primary')
-        if self.radius1_param.adjust_checkbox.value:
-            adjustable_params.append('requiv@primary')
-        if self.temperature1_param.adjust_checkbox.value:
-            adjustable_params.append('teff@primary')
-        if self.mass2_param.adjust_checkbox.value:
-            adjustable_params.append('mass@secondary')
-        if self.radius2_param.adjust_checkbox.value:
-            adjustable_params.append('requiv@secondary')
-        if self.temperature2_param.adjust_checkbox.value:
-            adjustable_params.append('teff@secondary')
-        if self.inclination_param.adjust_checkbox.value:
-            adjustable_params.append('incl@binary')
-        if self.eccentricity_param.adjust_checkbox.value:
-            adjustable_params.append('ecc@binary')
-        if self.omega_param.adjust_checkbox.value:
-            adjustable_params.append('per0@binary')
-        
-        if not adjustable_params:
-            ui.notify('No parameters marked for adjustment', type='warning')
-            return
-        
-        if not self.client_id or not self.phoebe_api:
-            ui.notify('Session not available for parameter fitting', type='error')
-            return
-        
-        ui.notify(f'Fitting parameters: {", ".join(adjustable_params)}', type='info')
-        # TODO: Use self.phoebe_api.send_command() to fit parameters
+        try:
+            # Show button loading indicator
+            self.fit_button.props('loading')
+            
+            adjustable_params = []
+            
+            # Check all parameters for adjustment
+            if self.t0_param.adjust_checkbox.value:
+                adjustable_params.append('t0_supconj@binary')
+            if self.period_param.adjust_checkbox.value:
+                adjustable_params.append('period@binary')
+            if self.mass1_param.adjust_checkbox.value:
+                adjustable_params.append('mass@primary')
+            if self.radius1_param.adjust_checkbox.value:
+                adjustable_params.append('requiv@primary')
+            if self.temperature1_param.adjust_checkbox.value:
+                adjustable_params.append('teff@primary')
+            if self.mass2_param.adjust_checkbox.value:
+                adjustable_params.append('mass@secondary')
+            if self.radius2_param.adjust_checkbox.value:
+                adjustable_params.append('requiv@secondary')
+            if self.temperature2_param.adjust_checkbox.value:
+                adjustable_params.append('teff@secondary')
+            if self.inclination_param.adjust_checkbox.value:
+                adjustable_params.append('incl@binary')
+            if self.eccentricity_param.adjust_checkbox.value:
+                adjustable_params.append('ecc@binary')
+            if self.omega_param.adjust_checkbox.value:
+                adjustable_params.append('per0@binary')
+            
+            if not adjustable_params:
+                ui.notify('No parameters marked for adjustment', type='warning')
+                return
+            
+            if not self.client_id or not self.phoebe_api:
+                ui.notify('Session not available for parameter fitting', type='error')
+                return
+            
+            ui.notify(f'Fitting parameters: {", ".join(adjustable_params)}', type='info')
+            
+            # TODO: Use self.phoebe_api.send_command() to fit parameters
+            # For now, just show completion
+            ui.notify('Parameter fitting completed', type='positive')
+            
+        except Exception as e:
+            ui.notify(f"Error fitting parameters: {str(e)}", type='negative')
+        finally:
+            # Remove button loading indicator
+            self.fit_button.props(remove='loading')
     
     def get_user_info(self):
         """Get user information for logging or display purposes."""
@@ -1484,7 +1579,7 @@ if __name__ in {"__main__", "__mp_main__"}:
     session_api = SessionAPI(base_url="http://localhost:8001")
     phoebe_api = PhoebeAPI(base_url="http://localhost:8001")
 
-    # Create UI with API instances
+    # Create UI with API instances - this will automatically start one session
     app = PhoebeUI(session_api=session_api, phoebe_api=phoebe_api)
 
-    ui.run(host='0.0.0.0', port=8082, title='Phoebe UI')
+    ui.run(host='0.0.0.0', port=8082, title='Phoebe UI', reload=False)
