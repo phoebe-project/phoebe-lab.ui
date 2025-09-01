@@ -33,7 +33,7 @@ class PhoebeServer:
 
     def run_command(self, message):
         """Process a single command message."""
-        cmd_name = message.get("cmd")
+        cmd_name = message.get('cmd')
 
         if cmd_name in self.commands:
             try:

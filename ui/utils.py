@@ -49,6 +49,7 @@ def alias_data(data, extend_range=0.1):
 
     return aliased
 
+
 def flux_to_magnitude(flux, zero_point=0.0):
     """
     Convert flux to magnitude.
