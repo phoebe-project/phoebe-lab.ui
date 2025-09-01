@@ -10,7 +10,7 @@ class SessionManagerUI:
 
     def __init__(self):
         self.api = SessionAPI()
-        
+
         ui.button("Start New Session", on_click=self.start_session)
         ui.button("Close Selected Session(s)", on_click=self.close_session)
         ui.button("Refresh Sessions", on_click=self.refresh_sessions)
@@ -18,7 +18,7 @@ class SessionManagerUI:
         # Port status display
         with ui.row():
             self.port_status_label = ui.label("Port Status: Loading...")
-        
+
         columns = [
             {'name': 'timestamp', 'label': 'Time created', 'field': 'timestamp'},
             {'name': 'client_id', 'label': 'Client ID', 'field': 'client_id'},
@@ -45,7 +45,7 @@ class SessionManagerUI:
             row_key='client_id',
             selection='multiple',
         ).classes('w-full')
-        
+
         # Create a timer to update memory usage and port status every 10 seconds
         self.timer = ui.timer(10.0, self.update_data)
 
@@ -81,10 +81,10 @@ class SessionManagerUI:
         try:
             # Update memory usage
             memory_data = self.api.get_memory_usage()
-            
+
             # Get fresh session data to update user info
             sessions_data = self.api.get_sessions()
-            
+
             # Update memory usage and user info for each row
             for row in self.table.rows:
                 client_id = row['client_id']
@@ -92,11 +92,11 @@ class SessionManagerUI:
                     row['mem_used'] = f'{memory_data[client_id]:2.2f} MB'
                 if client_id in sessions_data:
                     row['user_display_name'] = sessions_data[client_id].get('user_display_name', 'Not logged in')
-            
+
             # Update port status
             port_status = self.api.get_port_status()
             self.port_status_label.text = f"Ports: {port_status['available_ports']}/{port_status['total_ports']} available"
-            
+
             # Update the table with new values
             self.table.update()
         except Exception:

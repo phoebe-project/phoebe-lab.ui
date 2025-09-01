@@ -11,20 +11,20 @@ import numpy as np
 def make_json_serializable(obj):
     """
     Convert numpy arrays and other non-serializable objects to JSON-compatible types.
-    
+
     This function recursively processes nested structures (dicts, lists, tuples) and
     converts numpy objects to standard Python types.
-    
+
     Parameters:
     -----------
     obj : any
         Object to be serialized (can be nested dict/list structure)
-        
+
     Returns:
     --------
     any
         JSON-serializable equivalent of the input object
-        
+
     Examples:
     ---------
     >>> import numpy as np

@@ -130,7 +130,7 @@ def list_sessions() -> Dict[str, Dict[str, object]]:
         if proc and not proc.is_running():
             logger.warning(f"Found dead process for client {client_id}, cleaning up")
             dead_clients.append(client_id)
-    
+
     # Remove dead clients
     for client_id in dead_clients:
         shutdown_server(client_id)

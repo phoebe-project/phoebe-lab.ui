@@ -24,6 +24,7 @@ class PhoebeServer:
             'phoebe.version': self.version,
             'b.set_value': self.set_value,
             'b.add_dataset': self.add_dataset,
+            'b.remove_dataset': self.remove_dataset,
             'b.run_compute': self.run_compute,
             'status': self.status
         }
@@ -78,7 +79,7 @@ class PhoebeServer:
         # Extract required parameters
         twig = kwargs.pop('twig', None)
         value = kwargs.pop('value', None)
-        
+
         # Validate required parameters
         if twig is None:
             raise ValueError("twig parameter is required for set_value")
@@ -102,14 +103,24 @@ class PhoebeServer:
 
         return {"status": "Dataset added successfully"}
 
+    def remove_dataset(self, **kwargs):
+        """Remove a dataset from the Phoebe bundle."""
+        dataset = kwargs.pop('dataset', None)
+
+        if dataset is None:
+            raise ValueError("dataset parameter is required for remove_dataset")
+
+        self.bundle.remove_dataset(dataset)
+        return {"status": f"Dataset {dataset} removed successfully"}
+
     def run_compute(self, **kwargs):
         """Run the Phoebe compute model.
-        
+
         Parameters:
         -----------
         **kwargs : dict
             Optional parameters for the compute (e.g., compute='preview', etc.)
-            
+
         Returns:
         --------
         dict
@@ -133,9 +144,9 @@ class PhoebeServer:
             if kind == 'lc':
                 result[dataset]['fluxes'] = self.bundle.get_value('fluxes', dataset=dataset, context='model')
             if kind == 'rv':
-                # TODO: fix component issue here
-                result[dataset]['rvs'] = self.bundle.get_value('rvs', dataset=dataset, component='primary', context='model')
-            
+                result[dataset]['rv1s'] = self.bundle.get_value('rvs', dataset=dataset, component='primary', context='model')
+                result[dataset]['rv2s'] = self.bundle.get_value('rvs', dataset=dataset, component='secondary', context='model')
+
         return {"status": "Compute completed successfully", "model": result}
 
     def status(self):

@@ -6,37 +6,37 @@ from common.serialization import make_json_serializable
 
 class PhoebeAPI:
     """API client for Phoebe parameter operations."""
-    
+
     def __init__(self, base_url: str = "http://localhost:8001", client_id: str = None):
         self.base_url = base_url
         self.client_id = client_id
-    
+
     def set_client_id(self, client_id: str):
         """Set the client ID for this API instance."""
         self.client_id = client_id
-    
+
     def send_command(self, command: dict):
         """Send a general command to the Phoebe session."""
         if not self.client_id:
             raise ValueError("No client ID set. Call set_client_id() first or provide client_id in constructor.")
-        
+
         # Serialize the command to ensure JSON compatibility
         serializable_command = make_json_serializable(command)
-        
+
         response = requests.post(f"{self.base_url}/send/{self.client_id}", json=serializable_command)
         response.raise_for_status()
         return response.json()
 
     def set_value(self, twig: str, value: float):
         """Set a parameter value in the Phoebe session.
-        
+
         Parameters:
         -----------
         twig : str
             The parameter twig/qualifier (e.g., 'period@binary', 't0_supconj@binary')
         value : float
             The value to set for the parameter
-            
+
         Returns:
         --------
         dict
@@ -46,7 +46,7 @@ class PhoebeAPI:
             raise ValueError("twig parameter cannot be empty")
         if value is None:
             raise ValueError("value parameter cannot be None")
-            
+
         command = {
             'cmd': 'b.set_value',
             'params': {
@@ -69,15 +69,28 @@ class PhoebeAPI:
 
         return self.send_command(command)
 
+    def remove_dataset(self, dataset: str):
+        """Remove a dataset from the Phoebe session."""
+        if not dataset:
+            raise ValueError("dataset parameter cannot be empty")
+
+        command = {
+            'cmd': 'b.remove_dataset',
+            'params': {
+                'dataset': dataset
+            }
+        }
+        return self.send_command(command)
+
     def run_compute(self, **kwargs):
         """Run the Phoebe computation with the current parameters.
-        
+
         Parameters:
         -----------
         **kwargs : dict
             Optional parameters for the compute operation
             (e.g., compute='preview', model='phoebe', etc.)
-            
+
         Returns:
         --------
         dict
