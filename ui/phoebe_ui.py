@@ -240,7 +240,7 @@ class PhoebeUI:
                 step=0.01,
                 adjust=False,
                 phoebe_api=self.phoebe_api,
-                on_value_changed=self._on_ephemeris_changed
+                on_value_changed=self.on_ephemeris_changed
             )
 
             self.period_param = PhoebeParameterWidget(
@@ -250,7 +250,7 @@ class PhoebeUI:
                 step=0.0001,
                 adjust=False,
                 phoebe_api=self.phoebe_api,
-                on_value_changed=self._on_ephemeris_changed
+                on_value_changed=self.on_ephemeris_changed
             )
 
         # Primary star parameters
@@ -339,9 +339,6 @@ class PhoebeUI:
                 adjust=False,
                 phoebe_api=self.phoebe_api
             )
-
-        with ui.row().classes('gap-4 mt-2'):
-            self.fit_button = ui.button('Fit Parameters', on_click=self.fit_parameters, icon='tune').classes('h-12 flex-shrink-0')
 
     def create_dataset_panel(self):
         with ui.expansion('Dataset Management', icon='table_chart', value=True).classes('w-full mb-2').style('padding: 2px;'):
@@ -450,6 +447,24 @@ class PhoebeUI:
                     'displayModeBar': True,
                     'displaylogo': False
                 }
+
+    def create_fitting_panel(self):
+        with ui.expansion('Model fitting', icon='tune', value=False).classes('w-full'):
+
+            with ui.column().classes('h-full p-4 min-w-0'):
+                with ui.row().classes('w-full gap-4 mt-2'):
+                    # Solver selection
+                    self.solver_select = ui.select(
+                        options={'dc': 'Differential corrections'},
+                        value='dc',
+                        label='Solver'
+                    ).classes('mb-4')
+                
+                    self.fit_button = ui.button(
+                        'Run solver',
+                        on_click=self.fit_parameters,
+                        icon='tune'
+                    ).classes('h-12 flex-shrink-0')
 
     def create_empty_styled_lc_plot(self):
         fig = go.Figure()
@@ -805,7 +820,8 @@ class PhoebeUI:
             ui.notify('Please select a dataset to edit.', type='warning')
             return
 
-        self.open_dataset_dialog(dataset=self.selected_dataset_row['label'])
+        self.dataset_dialog.open()
+        # TODO: need to populate with dataset=self.selected_dataset_row['label'])
 
     def on_dataset_panel_remove_button_clicked(self):
         if not self.selected_dataset_row:
@@ -814,17 +830,22 @@ class PhoebeUI:
 
         dataset = self.selected_dataset_row['label']
 
-        with ui.dialog() as confirm_dialog, ui.card():
+        with ui.dialog() as dialog, ui.card():
             ui.label(f'Are you sure you want to remove dataset "{dataset}"?').classes('text-lg font-bold')
             with ui.row().classes('gap-2 justify-end mt-4'):
-                ui.button('Cancel', on_click=confirm_dialog.close).props('flat')
+                ui.button('Cancel', on_click=dialog.close).props('flat')
                 ui.button(
                     'Remove',
-                    on_click=lambda: self.remove_dataset(dataset, confirm_dialog),
+                    on_click=lambda: self.on_dataset_remove_confirmed(dataset, dialog),
                     color='negative'
                 ).props('flat')
 
-        confirm_dialog.open()
+        dialog.open()
+
+    def on_dataset_remove_confirmed(self, dataset, dialog):
+        self.dataset.remove(dataset)
+        self.refresh_dataset_panel()
+        dialog.close()
 
     def on_dataset_panel_checkbox_toggled(self, event):
         dataset = event.args['data']['label']
@@ -856,7 +877,9 @@ class PhoebeUI:
 
             # Light curve plot (pass reference to UI for parameter access)
             self.create_lc_panel()
-            # self.light_curve_plot = LightCurvePlot(self)
+
+            # Fitting panel:
+            self.create_fitting_panel()
 
     def show_startup_dialog(self):
         """Show startup dialog to collect user info and initialize session."""
@@ -959,12 +982,14 @@ class PhoebeUI:
                 if self.phoebe_api:
                     self.phoebe_api.set_client_id(None)
 
-    def _on_ephemeris_changed(self, param_name=None, param_value=None):
+    def on_ephemeris_changed(self, param_name=None, param_value=None):
         """Handle changes to ephemeris parameters (t0, period) and update phase plot."""
-        if hasattr(self, 'light_curve_plot') and self.light_curve_plot:
-            # Only replot if we're currently showing phase on x-axis
-            if self.light_curve_plot.x_axis_dropdown.value == 'phase':
-                self.light_curve_plot.update_plot()
+        # Only replot if we're currently showing phase on x-axis or if there's any data to plot
+        if self.widgets['lc_plot_x_axis'].value == 'phase' or any(
+            ds_meta.get('plot_data', False) or ds_meta.get('plot_model', False)
+            for ds_meta in self.dataset.datasets.values() if ds_meta['kind'] == 'lc'
+        ):
+            self.on_lc_plot_button_clicked()
 
     def _on_morphology_change(self):
         """Handle morphology selection change with confirmation dialog."""
