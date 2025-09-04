@@ -101,3 +101,10 @@ class PhoebeAPI:
             'params': kwargs
         }
         return self.send_command(command)
+
+    def run_solver(self, **kwargs):
+        command = {
+            'cmd': 'b.run_solver',
+            'params': kwargs
+        }
+        return self.send_command(command)

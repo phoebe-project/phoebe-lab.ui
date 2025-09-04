@@ -14,10 +14,12 @@ class PhoebeServer:
         self.socket = self.context.socket(zmq.REP)
         self.socket.bind(f"tcp://0.0.0.0:{port}")
 
-        # Create a Phoebe bundle and set up the environment
+        # Create a Phoebe bundle, parametrize for the UI and
+        # initialize a dc solver:
         self.bundle = phoebe.default_binary()
         self.bundle.flip_constraint('mass@primary', solve_for='q@binary')
         self.bundle.flip_constraint('mass@secondary', solve_for='sma@binary')
+        self.bundle.add_solver('differential_corrections', solver='dc')
 
         # Command registry
         self.commands = {
@@ -26,6 +28,7 @@ class PhoebeServer:
             'b.add_dataset': self.add_dataset,
             'b.remove_dataset': self.remove_dataset,
             'b.run_compute': self.run_compute,
+            'b.run_solver': self.run_solver,
             'status': self.status
         }
 
@@ -148,6 +151,25 @@ class PhoebeServer:
                 result[dataset]['rv2s'] = self.bundle.get_value('rvs', dataset=dataset, component='secondary', context='model')
 
         return {"status": "Compute completed successfully", "model": result}
+
+    def run_solver(self, **kwargs):
+        # Run the solver:
+        self.bundle.run_solver(**kwargs)
+
+        fit_parameters = self.bundle.get_value('fit_parameters', context='solver')
+        init_values = self.bundle.get_value('initial_values', context='solver')
+        fitted_values = self.bundle.get_value('fitted_values', context='solution')
+
+        result = {
+            'fit_parameters': fit_parameters,
+            'initial_values': init_values,
+            'fitted_values': fitted_values,
+        }
+
+        return {
+            'status': 'Solver completed successfully',
+            'solution': result
+        }
 
     def status(self):
         """Get server status."""
