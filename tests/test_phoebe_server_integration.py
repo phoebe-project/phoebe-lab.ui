@@ -34,7 +34,7 @@ def test_phoebe_server_integration():
 
         print(f"Version response: {version_response}")
         assert version_response is not None
-        assert version_response.get('status') == 'success'
+        assert version_response.get('success') is True
         assert 'result' in version_response
         print(f"✓ Phoebe version: {version_response['result']}")
 

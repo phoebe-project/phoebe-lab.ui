@@ -27,30 +27,27 @@ class PhoebeAPI:
         response.raise_for_status()
         return response.json()
 
-    def set_value(self, twig: str, value: float):
-        """Set a parameter value in the Phoebe session.
-
-        Parameters:
-        -----------
-        twig : str
-            The parameter twig/qualifier (e.g., 'period@binary', 't0_supconj@binary')
-        value : float
-            The value to set for the parameter
-
-        Returns:
-        --------
-        dict
-            Response from the server with status and result
-        """
+    def get_parameter(self, twig: str):
         if not twig:
-            raise ValueError("twig parameter cannot be empty")
+            raise ValueError('twig parameter cannot be empty.')
+
+        command = {
+            'cmd': 'b.get_parameter',
+            'params': {'twig': twig}
+        }
+        return self.send_command(command)
+
+    def set_value(self, twig: str = None, uniqueid: str = None, value=None):
+        if twig is None and uniqueid is None:
+            raise ValueError("either `twig` or `uniqueid` need to be passed")
         if value is None:
-            raise ValueError("value parameter cannot be None")
+            raise ValueError("`value` parameter missing")
 
         command = {
             'cmd': 'b.set_value',
             'params': {
                 'twig': twig,
+                'uniqueid': uniqueid,
                 'value': value
             }
         }

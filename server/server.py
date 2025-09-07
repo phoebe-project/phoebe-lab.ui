@@ -24,6 +24,7 @@ class PhoebeServer:
         # Command registry
         self.commands = {
             'phoebe.version': self.version,
+            'b.get_parameter': self.get_parameter,
             'b.set_value': self.set_value,
             'b.add_dataset': self.add_dataset,
             'b.remove_dataset': self.remove_dataset,
@@ -51,8 +52,8 @@ class PhoebeServer:
 
                 # Send back the result
                 response = {
-                    "status": "success",
-                    "result": serializable_result
+                    'success': True,
+                    'result': serializable_result
                 }
 
                 print(f"[phoebe_server] Command '{cmd_name}' executed successfully")
@@ -60,7 +61,7 @@ class PhoebeServer:
 
             except Exception as e:
                 error_response = {
-                    "status": "error",
+                    "success": False,
                     "error": str(e),
                     "traceback": traceback.format_exc()
                 }
@@ -68,7 +69,7 @@ class PhoebeServer:
                 return error_response
         else:
             return {
-                "status": "error",
+                "success": False,
                 "error": f"Unknown command: {cmd_name}",
                 "available_commands": list(self.commands.keys())
             }
@@ -77,21 +78,38 @@ class PhoebeServer:
         """Get Phoebe version."""
         return phoebe.__version__
 
+    def get_parameter(self, **kwargs):
+        twig = kwargs.pop('twig', None)
+
+        if twig is None:
+            raise ValueError('twig parameter is required for get_parameter')
+
+        par = self.bundle.get_parameter(twig)
+        result = par.to_json()
+        result['uniqueid'] = par.uniqueid
+        # result['choices'] = par.choices if hasattr(par, 'choices') else None
+        return result
+
+    def get_value(self, **kwargs):
+        twig = kwargs.pop('twig', None)
+
+        if twig is None:
+            raise ValueError('twig parameter is required for get_value')
+
+        return self.bundle.get_value(twig)
+
     def set_value(self, **kwargs):
         """Set a parameter value in the Phoebe bundle."""
         # Extract required parameters
         twig = kwargs.pop('twig', None)
+        uniqueid = kwargs.pop('uniqueid', None)
         value = kwargs.pop('value', None)
 
-        # Validate required parameters
-        if twig is None:
-            raise ValueError("twig parameter is required for set_value")
-        if value is None:
-            raise ValueError("value parameter is required for set_value")
-
         # Call Phoebe's set_value method
-        self.bundle.set_value(twig, value)
-        return {"status": f"Parameter {twig} set to {value} successfully"}
+        self.bundle.set_value(twig=twig, uniqueid=uniqueid, value=value)
+        return {
+            'success': True
+        }
 
     def add_dataset(self, **kwargs):
         """Add a dataset to the Phoebe bundle."""
@@ -104,7 +122,7 @@ class PhoebeServer:
         # Call Phoebe's add_dataset with kind as positional arg and rest as kwargs
         self.bundle.add_dataset(kind, **kwargs)
 
-        return {"status": "Dataset added successfully"}
+        return {"success": True, "message": "Dataset added successfully"}
 
     def remove_dataset(self, **kwargs):
         """Remove a dataset from the Phoebe bundle."""
@@ -114,7 +132,7 @@ class PhoebeServer:
             raise ValueError("dataset parameter is required for remove_dataset")
 
         self.bundle.remove_dataset(dataset)
-        return {"status": f"Dataset {dataset} removed successfully"}
+        return {"success": True, "message": f"Dataset {dataset} removed successfully"}
 
     def run_compute(self, **kwargs):
         """Run the Phoebe compute model.
@@ -150,14 +168,14 @@ class PhoebeServer:
                 result[dataset]['rv1s'] = self.bundle.get_value('rvs', dataset=dataset, component='primary', context='model')
                 result[dataset]['rv2s'] = self.bundle.get_value('rvs', dataset=dataset, component='secondary', context='model')
 
-        return {"status": "Compute completed successfully", "model": result}
+        return {"success": True, "message": "Compute completed successfully", "model": result}
 
     def run_solver(self, **kwargs):
         # Run the solver:
         self.bundle.run_solver(**kwargs)
 
-        fit_parameters = self.bundle.get_value('fit_parameters', context='solver')
-        init_values = self.bundle.get_value('initial_values', context='solver')
+        fit_parameters = self.bundle.get_value('fitted_twigs', context='solution')
+        init_values = self.bundle.get_value('initial_values', context='solution')
         fitted_values = self.bundle.get_value('fitted_values', context='solution')
 
         result = {
@@ -167,13 +185,14 @@ class PhoebeServer:
         }
 
         return {
-            'status': 'Solver completed successfully',
+            'success': True,
+            'message': 'Solver completed successfully',
             'solution': result
         }
 
     def status(self):
         """Get server status."""
-        return {"status": "ok", "port": self.port}
+        return {"success": True, "message": "ok", "port": self.port}
 
     def run(self):
         """Main server loop."""
@@ -191,7 +210,7 @@ class PhoebeServer:
             except Exception as e:
                 print(f"[phoebe_server] Unexpected error: {e}")
                 error_response = {
-                    "status": "error",
+                    "success": False,
                     "error": f"Server error: {str(e)}",
                     "traceback": traceback.format_exc()
                 }

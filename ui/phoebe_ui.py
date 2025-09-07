@@ -9,51 +9,118 @@ from asyncio import get_event_loop
 
 
 class PhoebeParameterWidget:
-    """Widget for a single Phoebe parameter with value, adjustment checkbox, and step size."""
+    """
+    Parent class for all parameter widgets.
+    """
 
-    def __init__(self, twig: str, label: str, value: float, step: float = 0.001,
-                 adjust: bool = False, phoebe_api=None, on_value_changed=None):
+    def __init__(self, twig: str, label: str, format: str = '%.3f', api=None, ui_hook=None, **kwargs):
+        # save the twig for error handling.
         self.twig = twig
-        self.label = label
-        self.value = value
+
+        # grab parameter information from the api:
+        request = api.get_parameter(twig)
+        if request['success']:
+            par = request['result']
+            value = par['value']
+            self.uniqueid = par['uniqueid']
+
+        self.api = api  # Reference to API for setting values
+        self.ui_hook = ui_hook  # Optional hook for UI updates
+
+        if par['Class'] in ['FloatParameter', 'IntParameter']:
+            order_of_mag = np.floor(np.log10(np.abs(value))) if value != 0 else 0
+            limits = par['limits']
+            self.widget = ui.number(
+                label=label,
+                value=value,
+                format=format,
+                min=limits[0],
+                max=limits[1],
+                step=float(10**(order_of_mag-2))
+            ).classes('flex-1 min-w-0')
+
+        elif par['Class'] == 'ChoiceParameter':
+            self.widget = ui.select(
+                label=label,
+                options=par['choices'],
+                value=value
+            ).classes('flex-1 min-w-0')
+
+        elif par['Class'] == 'BoolParameter':
+            self.widget = ui.checkbox(
+                text=label,
+                value=value
+            ).classes('flex-1 min-w-0')
+
+        else:
+            raise NotImplementedError(f"Parameter class {par['Class']} not supported yet.")
+
+        self.widget.on('update:model-value', self.on_value_changed)
+
+    def get_value(self):
+        if self.widget:
+            return self.widget.value
+
+    def on_value_changed(self, event):
+        if event is None:
+            return
+
+        new_value = self.widget.value
+
+        try:
+            response = self.api.set_value(uniqueid=self.uniqueid, value=new_value)
+            if not response.get('success', False):
+                ui.notify(f'Failed to set {self.twig}: {response.get("error", "Unknown error")}', type='negative')
+        except Exception as e:
+            ui.notify(f'Error setting {self.twig}: {str(e)}', type='negative')
+
+        if self.ui_hook:
+            self.ui_hook(new_value)
+
+
+class PhoebeAdjustableParameterWidget:
+    """
+    Widget for a single Phoebe parameter with value, adjustment checkbox, and step size.
+    """
+
+    def __init__(self, twig: str, label: str, step: float = 0.001, vformat: str = '%.3f',
+                 sformat: str = '%.3f', adjust: bool = False, api=None, ui_hook=None, **kwargs):
         self.step = step
         self.adjust = adjust
-        self.phoebe_api = phoebe_api  # Reference to API for setting values
-        self.on_value_changed = on_value_changed  # Optional callback for UI updates
 
         with ui.row().classes('items-center gap-2 w-full'):
             # Parameter label
             ui.label(f'{label}:').classes('w-24 flex-shrink-0 text-sm')
 
             # Value input
-            self.value_input = ui.number(
+            self.value_input = PhoebeParameterWidget(
+                twig=twig,
                 label='Value',
-                value=value,
-                format='%.6f',
-                step=step
-            ).classes('flex-1 min-w-0')
+                format=vformat,
+                api=api,
+                ui_hook=ui_hook,
+                **kwargs
+            )
 
-            # Add value change handler
-            def handle_change():
-                self._on_value_changed(self.value_input.value)
-            self.value_input.on('update:model-value', handle_change)
-
-            # Checkbox for adjustment (moved before step)
+            # Checkbox for adjustment
             self.adjust_checkbox = ui.checkbox(text='Adjust', value=adjust).classes('flex-shrink-0')
-            self.adjust_checkbox.on('update:model-value', self._on_adjust_changed)
+            self.adjust_checkbox.on('update:model-value', self.on_adjust_toggled)
 
             # Step size input (after checkbox)
             self.step_input = ui.number(
                 label='Step',
                 value=step,
-                format='%.6f',
+                format=sformat,
                 step=step/10
             ).classes('flex-1 min-w-0')
 
             # Set initial state of step input
-            self._on_adjust_changed()
+            self.on_adjust_toggled()
 
-    def _on_adjust_changed(self):
+    def get_value(self):
+        return self.value_input.widget.value
+
+    def on_adjust_toggled(self):
         """Handle adjust checkbox state change."""
         self.adjust = self.adjust_checkbox.value
 
@@ -63,30 +130,6 @@ class PhoebeParameterWidget:
         else:
             self.step_input.disable()
             self.step_input.classes(add='text-gray-400')
-
-    def _on_value_changed(self, new_value):
-        """Handle parameter value changes by updating Phoebe bundle and calling optional callback."""
-        if new_value is None:
-            return
-
-        # Update the stored value
-        self.value = new_value
-
-        # Call API to set the value in Phoebe
-        if self.phoebe_api:
-            try:
-                response = self.phoebe_api.set_value(self.twig, new_value)
-                if response.get('status') == 'success':
-                    # Successful update - could add debug notification if needed
-                    pass
-                else:
-                    ui.notify(f'Failed to set {self.twig}: {response.get("error", "Unknown error")}', type='negative')
-            except Exception as e:
-                ui.notify(f'Error setting {self.twig}: {str(e)}', type='negative')
-
-        # Call optional callback for additional UI updates
-        if self.on_value_changed:
-            self.on_value_changed(self.twig, new_value)
 
 
 class DatasetModel:
@@ -163,7 +206,7 @@ class DatasetModel:
 
         # set pblum_mode to dataset-scaled if we have actual data:
         if len(dataset_meta['fluxes']) > 0 or len(dataset_meta['rv1s']) > 0 or len(dataset_meta['rv2s']) > 0:
-            self.api.set_value(f'pblum_mode@{dataset}', 'dataset-scaled')
+            self.api.set_value(twig=f'pblum_mode@{dataset}', value='dataset-scaled')
 
     def remove(self, dataset):
         if dataset not in self.datasets:
@@ -213,15 +256,16 @@ class PhoebeUI:
             plot_resize_js = f'Plotly.Plots.resize(getHtmlElement({plot_id}))'
             self.main_splitter.on_value_change(lambda: ui.run_javascript(plot_resize_js))
 
-    def add_parameter(self, twig: str, label: str, value: float, step: float, adjust: bool, on_value_changed=None):
-        self.parameters[twig] = PhoebeParameterWidget(
+    def add_parameter(self, twig: str, label: str, step: float, adjust: bool, vformat: str = '%.3f', sformat: str = '%.3f', on_value_changed=None):
+        self.parameters[twig] = PhoebeAdjustableParameterWidget(
             twig=twig,
             label=label,
-            value=value,
             step=step,
             adjust=adjust,
-            on_value_changed=on_value_changed,
-            phoebe_api=self.phoebe_api,
+            vformat=vformat,
+            sformat=sformat,
+            api=self.phoebe_api,
+            ui_hook=on_value_changed,
         )
 
     def create_parameter_panel(self):
@@ -252,18 +296,20 @@ class PhoebeUI:
             self.add_parameter(
                 twig='t0_supconj@binary',
                 label='T₀ (BJD)',
-                value=2458000.0,
                 step=0.01,
                 adjust=False,
+                vformat='%.8f',
+                sformat='%.3f',
                 on_value_changed=self.on_ephemeris_changed
             )
 
             self.add_parameter(
                 twig='period@binary',
                 label='Period (d)',
-                value=2.5,
                 step=0.0001,
                 adjust=False,
+                vformat='%.8f',
+                sformat='%.3f',
                 on_value_changed=self.on_ephemeris_changed
             )
 
@@ -272,7 +318,6 @@ class PhoebeUI:
             self.add_parameter(
                 twig='mass@primary',
                 label='Mass (M₀)',
-                value=1.0,
                 step=0.01,
                 adjust=False,
             )
@@ -280,7 +325,6 @@ class PhoebeUI:
             self.add_parameter(
                 twig='requiv@primary',
                 label='Radius (R₀)',
-                value=1.0,
                 step=0.01,
                 adjust=False,
             )
@@ -288,7 +332,7 @@ class PhoebeUI:
             self.add_parameter(
                 twig='teff@primary',
                 label='Temperature (K)',
-                value=5778.0,
+                vformat='%d',
                 step=10.0,
                 adjust=False,
             )
@@ -298,7 +342,6 @@ class PhoebeUI:
             self.add_parameter(
                 twig='mass@secondary',
                 label='Mass (M₀)',
-                value=0.8,
                 step=0.01,
                 adjust=False,
             )
@@ -306,7 +349,6 @@ class PhoebeUI:
             self.add_parameter(
                 twig='requiv@secondary',
                 label='Radius (R₀)',
-                value=0.8,
                 step=0.01,
                 adjust=False,
             )
@@ -314,7 +356,7 @@ class PhoebeUI:
             self.add_parameter(
                 twig='teff@secondary',
                 label='Temperature (K)',
-                value=4800.0,
+                vformat='%d',
                 step=10.0,
                 adjust=False,
             )
@@ -324,7 +366,6 @@ class PhoebeUI:
             self.add_parameter(
                 twig='incl@binary',
                 label='Inclination (°)',
-                value=90.0,
                 step=0.1,
                 adjust=False,
             )
@@ -332,7 +373,6 @@ class PhoebeUI:
             self.add_parameter(
                 twig='ecc@binary',
                 label='Eccentricity',
-                value=0.0,
                 step=0.01,
                 adjust=False,
             )
@@ -340,7 +380,6 @@ class PhoebeUI:
             self.add_parameter(
                 twig='per0@binary',
                 label='Argument of periastron (°)',
-                value=0.0,
                 step=1.0,
                 adjust=False,
             )
@@ -413,75 +452,72 @@ class PhoebeUI:
                 # Primary star parameters row
                 with ui.row().classes('gap-4 items-center w-full mb-3'):
                     ui.label('Primary star:').classes('w-32 flex-shrink-0 text-sm font-medium')
-                    self.primary_atm_select = ui.select(
-                        options=['Blackbody', 'Castelli & Kurucz', 'Phoenix'],
-                        value='Castelli & Kurucz',
-                        label='Model atmosphere'
-                    ).classes('flex-1')
-                    
-                    self.primary_ntriangles_input = ui.number(
+                    self.primary_atm_select = PhoebeParameterWidget(
+                        twig='atm@primary',
+                        label='Model atmosphere',
+                        api=self.phoebe_api
+                    )
+
+                    self.primary_ntriangles_input = PhoebeParameterWidget(
+                        twig='ntriangles@primary',
                         label='Surface elements',
-                        value=1500,
-                        min=100,
-                        max=10000,
-                        step=100,
-                        format='%d'
-                    ).classes('flex-1')
-                    
-                    self.primary_distortion_select = ui.select(
-                        options=['none', 'sphere', 'rotstar', 'roche'],
-                        value='roche',
-                        label='Distortion'
-                    ).classes('flex-1')
+                        format='%d',
+                        api=self.phoebe_api
+                    )
+
+                    self.primary_distortion_select = PhoebeParameterWidget(
+                        twig='distortion_method@primary',
+                        label='Distortion',
+                        api=self.phoebe_api
+                    )
 
                 # Secondary star parameters row
                 with ui.row().classes('gap-4 items-center w-full mb-3'):
                     ui.label('Secondary star:').classes('w-32 flex-shrink-0 text-sm font-medium')
-                    self.secondary_atm_select = ui.select(
-                        options=['Blackbody', 'Castelli & Kurucz', 'Phoenix'],
-                        value='Castelli & Kurucz',
-                        label='Model atmosphere'
-                    ).classes('flex-1')
-                    
-                    self.secondary_ntriangles_input = ui.number(
+                    self.secondary_atm_select = PhoebeParameterWidget(
+                        twig='atm@secondary',
+                        label='Model atmosphere',
+                        api=self.phoebe_api
+                    )
+
+                    self.secondary_ntriangles_input = PhoebeParameterWidget(
+                        twig='ntriangles@secondary',
                         label='Surface elements',
-                        value=1500,
-                        min=100,
-                        max=10000,
-                        step=100,
-                        format='%d'
-                    ).classes('flex-1')
-                    
-                    self.secondary_distortion_select = ui.select(
-                        options=['none', 'sphere', 'rotstar', 'roche'],
-                        value='roche',
-                        label='Distortion'
-                    ).classes('flex-1')
+                        format='%d',
+                        api=self.phoebe_api
+                    )
+
+                    self.secondary_distortion_select = PhoebeParameterWidget(
+                        twig='distortion_method@secondary',
+                        label='Distortion',
+                        api=self.phoebe_api
+                    )
 
                 # System parameters and compute button row
                 with ui.row().classes('gap-4 items-center w-full'):
-                    self.irrad_method_select = ui.select(
-                        options=['none', 'Wilson', 'Horvat'],
-                        value='none',
-                        label='Irradiation method'
-                    ).classes('flex-1')
+                    self.irrad_method_select = PhoebeParameterWidget(
+                        twig='irrad_method',
+                        label='Irradiation method',
+                        api=self.phoebe_api
+                    )
 
-                    self.dynamics_method_select = ui.select(
-                        options=['keplerian'],
-                        value='keplerian',
-                        label='Dynamics method'
-                    ).classes('flex-1')
+                    self.dynamics_method_select = PhoebeParameterWidget(
+                        twig='dynamics_method',
+                        label='Dynamics method',
+                        api=self.phoebe_api
+                    )
 
-                    self.boosting_method_select = ui.select(
-                        options=['none'],
-                        value='none',
-                        label='Boosting method'
-                    ).classes('flex-1')
-                    
-                    self.ltte_checkbox = ui.checkbox(
-                        text='Include LTTE',
-                        value=False
-                    ).classes('flex-shrink-0')
+                    self.boosting_method_select = PhoebeParameterWidget(
+                        twig='boosting_method',
+                        label='Boosting method',
+                        api=self.phoebe_api
+                    )
+
+                    self.ltte_checkbox = PhoebeParameterWidget(
+                        twig='ltte',
+                        label='Include LTTE',
+                        api=self.phoebe_api
+                    )
                     
                     self.compute_button = ui.button(
                         'Compute Model',
@@ -528,20 +564,34 @@ class PhoebeUI:
     def create_fitting_panel(self):
         with ui.expansion('Model fitting', icon='tune', value=False).classes('w-full'):
 
-            with ui.column().classes('h-full p-4 min-w-0'):
-                with ui.row().classes('w-full gap-4 mt-2'):
+            with ui.column().classes('h-full p-4 min-w-0 w-full'):
+                with ui.row().classes('gap-4 items-center w-full'):
+
                     # Solver selection
                     self.solver_select = ui.select(
                         options={'dc': 'Differential corrections'},
                         value='dc',
                         label='Solver'
-                    ).classes('mb-4')
+                    ).classes('flex-1')
+
+                    self.deriv_method = PhoebeParameterWidget(
+                        twig='deriv_method@solver',
+                        label='Derivatives',
+                        options=['symmetric', 'asymmetric'],
+                        api=self.phoebe_api
+                    )
+
+                    self.expose_lnprobabilities = PhoebeParameterWidget(
+                        twig='expose_lnprobabilities@solver',
+                        label='Expose ln-probabilities',
+                        api=self.phoebe_api
+                    )
 
                     self.fit_button = ui.button(
                         'Run solver',
                         on_click=self.run_solver,
                         icon='tune'
-                    ).classes('h-12 flex-shrink-0')
+                    ).classes('h-12 flex-2')
 
     def create_empty_styled_lc_plot(self):
         fig = go.Figure()
@@ -597,8 +647,8 @@ class PhoebeUI:
         # We'll redraw the figure from scratch each time.
         fig = self.create_empty_styled_lc_plot()
 
-        period = self.parameters['period@binary'].value
-        t0 = self.parameters['t0_supconj@binary'].value
+        period = self.parameters['period@binary'].get_value()
+        t0 = self.parameters['t0_supconj@binary'].get_value()
 
         # See what needs to be plotted:
         for ds_label, ds_meta in self.dataset.datasets.items():
@@ -963,7 +1013,7 @@ class PhoebeUI:
     def show_startup_dialog(self):
         """Show startup dialog to collect user info and initialize session."""
         with ui.dialog().props('persistent') as self.startup_dialog, ui.card().classes('w-96'):
-            ui.label('Welcome to Phoebe UI').classes('text-xl font-bold mb-4')
+            ui.label('Welcome to Phoebe Lab UI').classes('text-xl font-bold mb-4')
 
             # Show client ID (will be populated after session init)
             ui.label('Session ID:').classes('text-sm font-medium')
@@ -1125,7 +1175,7 @@ class PhoebeUI:
                 None, self.phoebe_api.run_compute
             )
 
-            if response['status'] == 'success':
+            if response.get('success', False):
                 model_data = response.get('result', {}).get('model', {})
 
                 for ds_label, ds_meta in self.dataset.datasets.items():
@@ -1149,8 +1199,8 @@ class PhoebeUI:
 
         steps = [self.parameters[twig].step for twig in fit_parameters]
 
-        self.phoebe_api.set_value('fit_parameters@solver', fit_parameters)
-        self.phoebe_api.set_value('steps@solver', steps)
+        self.phoebe_api.set_value(twig='fit_parameters@solver', value=fit_parameters)
+        self.phoebe_api.set_value(twig='steps@solver', value=steps)
 
         try:
             # Show button loading indicator
@@ -1161,7 +1211,7 @@ class PhoebeUI:
                 None, self.phoebe_api.run_solver
             )
 
-            if response['status'] == 'success':
+            if response.get('success', False):
                 solution_data = response.get('result', {}).get('solution', {})
                 print(f'Solution data: {solution_data}')
                 ui.notify("Model fitting succeeded", type='positive')
@@ -1197,4 +1247,4 @@ if __name__ in {"__main__", "__mp_main__"}:
     # Create UI with API instances - this will automatically start one session
     app = PhoebeUI(session_api=session_api, phoebe_api=phoebe_api)
 
-    ui.run(host='0.0.0.0', port=8082, title='Phoebe UI', reload=False)
+    ui.run(host='0.0.0.0', port=8082, title='PHOEBE Lab UI', reload=False)
