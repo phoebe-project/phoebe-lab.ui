@@ -27,6 +27,13 @@ class PhoebeAPI:
         response.raise_for_status()
         return response.json()
 
+    def change_morphology(self, morphology):
+        command = {
+            'cmd': 'b.default_binary',
+            'params': {'morphology': morphology}
+        }
+        return self.send_command(command)
+
     def get_parameter(self, twig: str):
         if not twig:
             raise ValueError('twig parameter cannot be empty.')
@@ -34,6 +41,44 @@ class PhoebeAPI:
         command = {
             'cmd': 'b.get_parameter',
             'params': {'twig': twig}
+        }
+        return self.send_command(command)
+
+    def is_parameter_constrained(self, twig: str = None, uniqueid: str = None):
+        if not twig and not uniqueid:
+            raise ValueError("either `twig` or `uniqueid` need to be passed")
+
+        command = {
+            'cmd': 'is_parameter_constrained',
+            'params': {
+                'twig': twig,
+                'uniqueid': uniqueid
+            }
+        }
+        return self.send_command(command)
+
+    def get_value(self, twig: str = None, uniqueid: str = None):
+        if twig is None and uniqueid is None:
+            raise ValueError("either `twig` or `uniqueid` need to be passed")
+
+        command = {
+            'cmd': 'b.get_value',
+            'params': {
+                'twig': twig,
+                'uniqueid': uniqueid
+            }
+        }
+        return self.send_command(command)
+
+    def get_uniqueid(self, twig: str = None):
+        if twig is None:
+            raise ValueError("`twig` parameter cannot be empty.")
+
+        command = {
+            'cmd': 'get_uniqueid',
+            'params': {
+                'twig': twig
+            }
         }
         return self.send_command(command)
 

@@ -14,17 +14,17 @@ class PhoebeServer:
         self.socket = self.context.socket(zmq.REP)
         self.socket.bind(f"tcp://0.0.0.0:{port}")
 
-        # Create a Phoebe bundle, parametrize for the UI and
-        # initialize a dc solver:
-        self.bundle = phoebe.default_binary()
-        self.bundle.flip_constraint('mass@primary', solve_for='q@binary')
-        self.bundle.flip_constraint('mass@secondary', solve_for='sma@binary')
-        self.bundle.add_solver('differential_corrections', solver='dc')
+        # Initialize a bundle and set default morphology:
+        self.change_morphology(morphology='detached')
 
         # Command registry
         self.commands = {
             'phoebe.version': self.version,
+            'get_uniqueid': self.get_uniqueid,
+            'b.default_binary': self.change_morphology,
             'b.get_parameter': self.get_parameter,
+            'b.get_value': self.get_value,
+            'is_parameter_constrained': self.is_parameter_constrained,
             'b.set_value': self.set_value,
             'b.add_dataset': self.add_dataset,
             'b.remove_dataset': self.remove_dataset,
@@ -34,6 +34,26 @@ class PhoebeServer:
         }
 
         print(f"[phoebe_server] Running on port {port}")
+
+    def change_morphology(self, **kwargs):
+        morphology = kwargs.get('morphology', 'detached')
+
+        if morphology == 'detached':
+            self.bundle = phoebe.default_binary()
+        elif morphology == 'semi-detached':
+            self.bundle = phoebe.default_binary(semidetached='secondary')
+        elif morphology == 'contact':
+            self.bundle = phoebe.default_binary(contact_binary=True)
+        else:
+            raise ValueError(f"Invalid morphology: {morphology}")
+
+        self.bundle.flip_constraint('mass@primary', solve_for='q@binary')
+        self.bundle.flip_constraint('mass@secondary', solve_for='sma@binary')
+        self.bundle.add_solver('differential_corrections', solver='dc')
+
+        return {
+            'success': True
+        }
 
     def run_command(self, message):
         """Process a single command message."""
@@ -78,6 +98,20 @@ class PhoebeServer:
         """Get Phoebe version."""
         return phoebe.__version__
 
+    def get_uniqueid(self, **kwargs):
+        twig = kwargs.pop('twig')
+
+        try:
+            parameter = self.bundle.get_parameter(twig=twig)
+            uniqueid = parameter.uniqueid
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+        return uniqueid
+
     def get_parameter(self, **kwargs):
         twig = kwargs.pop('twig', None)
 
@@ -87,16 +121,33 @@ class PhoebeServer:
         par = self.bundle.get_parameter(twig)
         result = par.to_json()
         result['uniqueid'] = par.uniqueid
+        result['twig'] = par.twig
         # result['choices'] = par.choices if hasattr(par, 'choices') else None
         return result
 
+    def is_parameter_constrained(self, **kwargs):
+        twig = kwargs.pop('twig', None)
+        uniqueid = kwargs.pop('uniqueid', None)
+
+        if twig is None and uniqueid is None:
+            raise ValueError("either `twig` or `uniqueid` need to be passed")
+
+        try:
+            par = self.bundle.get_parameter(uniqueid=uniqueid, twig=twig)
+            constrained = True if par.constrained_by else False
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+        return constrained
+
     def get_value(self, **kwargs):
         twig = kwargs.pop('twig', None)
+        uniqueid = kwargs.pop('uniqueid', None)
 
-        if twig is None:
-            raise ValueError('twig parameter is required for get_value')
-
-        return self.bundle.get_value(twig)
+        return self.bundle.get_value(twig=twig, uniqueid=uniqueid)
 
     def set_value(self, **kwargs):
         """Set a parameter value in the Phoebe bundle."""
